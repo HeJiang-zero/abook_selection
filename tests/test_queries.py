@@ -1,4 +1,4 @@
-from app.queries import build_analysis_query
+from app.queries import build_analysis_query, build_daily_pnl_query
 
 
 def test_analysis_query_has_final_and_delete_filter():
@@ -122,6 +122,41 @@ def test_analysis_query_uses_tuple_population_and_canonical_deals_pnl():
     assert "coalesce(d.deal_market_pnl, 0) AS market_pnl" in query
     assert "positionCaseInsensitive(`group`, 'test') = 0" in query
     assert "positionCaseInsensitive(`group`, 'demo') = 0" in query
+
+
+def test_daily_pnl_query_aggregates_utc_deals_and_reuses_account_boundaries():
+    query, params = build_daily_pnl_query(
+        platforms=["mt5"],
+        start="2026-05-01",
+        end="2026-07-13",
+        filters={"groups": ["real\\FPlive"], "logins": [123]},
+    )
+
+    assert "risk.ods_mt5_users FINAL" in query
+    assert "FROM risk.ods_mt5_deals AS d FINAL" in query
+    assert "toDate(d.time) AS trade_date" in query
+    assert "action IN (0, 1)" in query
+    assert "sumIf(profit + storage + commission + fee, action IN (0, 1)) AS client_net_pnl" in query
+    assert "is_deleted = 0" in query
+    assert "positionCaseInsensitive" in query
+    assert "'test') = 0" in query
+    assert "'demo') = 0" in query
+    assert "has({login_0:Array(UInt64)}, login)" in query
+    assert params["start"] == "2026-05-01"
+    assert params["end_exclusive"] == "2026-07-14"
+
+
+def test_daily_pnl_query_embeds_large_excluded_login_sets_without_http_array_params():
+    query, params = build_daily_pnl_query(
+        platforms=["mt5"],
+        start="2026-05-01",
+        end="2026-07-13",
+        filters={},
+        excluded_logins={("mt5", login) for login in range(3000)},
+    )
+
+    assert "NOT ((platform = 'mt5' AND login IN (0,1,2" in query
+    assert "excluded_logins" not in params
 
 
 def test_account_detail_query_always_filters_demo_and_test_accounts():

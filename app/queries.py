@@ -288,6 +288,78 @@ ORDER BY k.platform, k.login, k.month_start
     return query, params
 
 
+def build_daily_pnl_query(
+    *,
+    platforms: list[str],
+    start: str,
+    end: str,
+    filters: dict[str, Any] | None = None,
+    excluded_logins: set[tuple[str, int]] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Build account-day canonical Deals P&L rows for a dashboard date range."""
+    clean_platforms = [platform for platform in platforms if platform in ALLOWED_PLATFORMS]
+    if not clean_platforms:
+        clean_platforms = sorted(ALLOWED_PLATFORMS)
+
+    filters = filters or {}
+    params: dict[str, Any] = {
+        "platforms": clean_platforms,
+        "start": start,
+        "end_exclusive": _date_end_exclusive(end),
+    }
+    user_conditions = ["is_deleted = 0", "has({platforms:Array(String)}, platform)"]
+    user_conditions.append("positionCaseInsensitive(\`group\`, 'test') = 0")
+    user_conditions.append("positionCaseInsensitive(\`group\`, 'demo') = 0")
+    values = filters.get("groups") or []
+    if values:
+        params["group_0"] = values
+        user_conditions.append("has({group_0:Array(String)}, \`group\`)")
+    if filters.get("logins"):
+        login_values = sorted({int(login) for login in filters["logins"]})
+        if len(login_values) <= 2000:
+            params["login_0"] = login_values
+            user_conditions.append("has({login_0:Array(UInt64)}, login)")
+        else:
+            user_conditions.append(f"login IN ({','.join(str(login) for login in login_values)})")
+    if excluded_logins:
+        by_platform: dict[str, list[int]] = {}
+        for platform, login in sorted(excluded_logins):
+            by_platform.setdefault(str(platform), []).append(int(login))
+        excluded_predicates = [
+            f"(platform = '{platform}' AND login IN ({','.join(str(login) for login in sorted(logins))}))"
+            for platform, logins in sorted(by_platform.items())
+        ]
+        user_conditions.append("NOT (" + " OR ".join(excluded_predicates) + ")")
+
+    query = f"""
+WITH users AS (
+    SELECT
+        platform,
+        login
+    FROM risk.ods_mt5_users FINAL
+    WHERE {" AND ".join(user_conditions)}
+    GROUP BY platform, login
+)
+SELECT
+    d.platform AS platform,
+    d.login AS login,
+    toDate(d.time) AS trade_date,
+    sumIf(profit + storage + commission + fee, action IN (0, 1)) AS client_net_pnl,
+    sumIf(profit, action IN (0, 1)) AS market_pnl,
+    countIf(action IN (0, 1)) AS matched_trades
+FROM risk.ods_mt5_deals AS d FINAL
+INNER JOIN users AS u
+    ON d.platform = u.platform AND d.login = u.login
+WHERE d.is_deleted = 0
+  AND d.platform IN {{platforms:Array(String)}}
+  AND d.time >= {{start:Date}}
+  AND d.time < {{end_exclusive:Date}}
+GROUP BY d.platform, d.login, trade_date
+ORDER BY d.platform, d.login, trade_date
+"""
+    return query, params
+
+
 def build_account_detail_query(platform: str, login: int, start: str, end: str) -> tuple[str, dict[str, Any]]:
     """Return trade-level detail for one account."""
     if platform not in ALLOWED_PLATFORMS:
