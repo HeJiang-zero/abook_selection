@@ -42,6 +42,10 @@ def _float(value: Any) -> float:
     return float(_decimal(value))
 
 
+def _optional_float(value: Any) -> Optional[float]:
+    return None if value is None else _float(value)
+
+
 def _canonical_market_pnl(row: dict[str, Any]) -> Decimal:
     """Use Deals P&L as the single market-P&L source; keep matched as fallback for old fixtures."""
     if row.get("market_pnl") is not None:
@@ -156,6 +160,10 @@ def _aggregate_account(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "last_access": _json_value(first.get("last_access")),
         "balance": _float(first.get("balance")),
         "equity_prev_day": _float(first.get("equity_prev_day")),
+        "risk_balance_prev_month": _optional_float(first.get("risk_balance_prev_month")),
+        "risk_average_open_degree": _optional_float(first.get("risk_average_open_degree")),
+        "risk_peak_leverage_ratio": _optional_float(first.get("risk_peak_leverage_ratio")),
+        "risk_balance_status": first.get("risk_balance_status", "not_available"),
         "agent": int(first.get("agent", 0) or 0),
         "client_id": str(first.get("client_id", "")),
         "trade_count": trade_count,
@@ -492,7 +500,8 @@ def _stability_assessment(
     min_payoff_ratio: float,
     min_positive_month_rate: float,
     min_selection_monthly_consistency: float,
-    max_top_day_concentration: float,
+    max_top1_day_profit_contribution: float,
+    max_peak_leverage_ratio: float,
     min_direction_day_rate_lower_bound: float,
     min_stability_score: float,
     high_confidence_trades: int,
@@ -536,8 +545,14 @@ def _stability_assessment(
         flags.append("payoff_ratio")
     if direction in {"positive", "negative"} and selection["monthly_consistency_ratio"] < min_selection_monthly_consistency:
         flags.append("monthly_consistency")
-    if direction in {"positive", "negative"} and concentration > max_top_day_concentration:
+    if direction in {"positive", "negative"} and concentration >= max_top1_day_profit_contribution:
         flags.append("profit_concentration" if is_positive else "loss_concentration")
+    if (
+        selection.get("risk_balance_status") == "positive"
+        and (selection.get("risk_peak_leverage_ratio") is None
+             or selection["risk_peak_leverage_ratio"] > max_peak_leverage_ratio)
+    ):
+        flags.append("leverage_ratio")
     if confidence_tier == "low":
         flags.append("insufficient_sample")
     if direction in {"positive", "negative"} and selection["max_drawdown"] > 0:
@@ -560,7 +575,7 @@ def _stability_assessment(
     score = round(max(0.0, min(100.0, score)), 2)
     hard_flags = {
         "insufficient_months", "monthly_inconsistency", "daily_confidence",
-        "profit_concentration", "loss_concentration", "insufficient_sample", "drawdown_efficiency",
+        "profit_concentration", "loss_concentration", "leverage_ratio", "insufficient_sample", "drawdown_efficiency",
         "win_rate", "payoff_ratio", "monthly_consistency",
     }
     tier = "observation"
@@ -581,6 +596,14 @@ def _stability_assessment(
         "top_negative_day_concentration": selection["top_negative_day_concentration"],
         "return_drawdown_ratio": selection["return_drawdown_ratio"],
     }
+
+
+def _leverage_filter_pass(selection: dict[str, Any], max_peak_leverage_ratio: float) -> bool:
+    """Apply leverage only when a positive prior-month balance exists."""
+    if selection.get("risk_balance_status") != "positive":
+        return True
+    peak = selection.get("risk_peak_leverage_ratio")
+    return peak is not None and peak <= max_peak_leverage_ratio
 
 
 def _correlation(pairs: list[tuple[Decimal, Decimal]]) -> float:
@@ -776,7 +799,9 @@ def build_two_stage_payload(
     min_selection_monthly_consistency: float = 0.5,
     neutral_band_usd: float = 10.0,
     min_positive_month_rate: float = 1.0,
-    max_top_day_concentration: float = 0.5,
+    max_top1_day_profit_contribution: float = 0.2,
+    max_peak_leverage_ratio: float = 5.0,
+    risk_snapshot_status: str = "not_loaded",
     min_direction_day_rate_lower_bound: float = 0.55,
     min_stability_score: float = 70.0,
     high_confidence_trades: int = 100,
@@ -826,7 +851,8 @@ def build_two_stage_payload(
             and selection["win_rate"] >= min_win_rate \
             and selection["payoff_ratio"] >= min_payoff_ratio \
             and selection_consistency_ok \
-            and selection["top_positive_day_concentration"] <= max_top_day_concentration:
+            and selection["top_positive_day_concentration"] < max_top1_day_profit_contribution \
+            and _leverage_filter_pass(selection, max_peak_leverage_ratio):
             directional_cohort = "abook_candidate"
         elif qualifies_sample and selection["client_net_pnl"] < 0 and (
             selection["profit_factor"] is not None and selection["profit_factor"] < min_profit_factor
@@ -834,7 +860,8 @@ def build_two_stage_payload(
             and selection["win_rate"] <= 1 - min_win_rate \
             and selection["payoff_ratio"] <= (1 / min_payoff_ratio if min_payoff_ratio else float("inf")) \
             and selection_consistency_ok \
-            and selection["top_negative_day_concentration"] <= max_top_day_concentration:
+            and selection["top_negative_day_concentration"] < max_top1_day_profit_contribution \
+            and _leverage_filter_pass(selection, max_peak_leverage_ratio):
             directional_cohort = "bbook_candidate"
         else:
             directional_cohort = "observation"
@@ -847,7 +874,8 @@ def build_two_stage_payload(
             min_payoff_ratio=min_payoff_ratio,
             min_positive_month_rate=min_positive_month_rate,
             min_selection_monthly_consistency=min_selection_monthly_consistency,
-            max_top_day_concentration=max_top_day_concentration,
+            max_top1_day_profit_contribution=max_top1_day_profit_contribution,
+            max_peak_leverage_ratio=max_peak_leverage_ratio,
             min_direction_day_rate_lower_bound=min_direction_day_rate_lower_bound,
             min_stability_score=min_stability_score,
             high_confidence_trades=high_confidence_trades,
@@ -896,6 +924,10 @@ def build_two_stage_payload(
             "selection_direction": stability["direction"],
             "selection_client_net_pnl": selection["client_net_pnl"],
             "validation_client_net_pnl": validation["client_net_pnl"],
+            "risk_balance_prev_month": selection["risk_balance_prev_month"],
+            "risk_average_open_degree": selection["risk_average_open_degree"],
+            "risk_peak_leverage_ratio": selection["risk_peak_leverage_ratio"],
+            "risk_balance_status": selection["risk_balance_status"],
             "client_net_pnl": selection["client_net_pnl"],
             "market_pnl": selection["market_pnl"],
             "theoretical_mirror_pnl": -selection["market_pnl"],
@@ -1139,7 +1171,9 @@ def build_two_stage_payload(
             "min_selection_monthly_consistency": min_selection_monthly_consistency,
             "neutral_band_usd": neutral_band_usd,
             "min_positive_month_rate": min_positive_month_rate,
-            "max_top_day_concentration": max_top_day_concentration,
+            "max_top1_day_profit_contribution": max_top1_day_profit_contribution,
+            "max_peak_leverage_ratio": max_peak_leverage_ratio,
+            "risk_snapshot_status": risk_snapshot_status,
             "min_direction_day_rate_lower_bound": min_direction_day_rate_lower_bound,
             "min_stability_score": min_stability_score,
             "high_confidence_trades": high_confidence_trades,

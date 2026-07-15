@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .models import AnalysisRequest, FilterOptions
 from .repository import ClickHouseRepository, RepositoryConfigurationError
+from .risk import build_local_risk_filter
 from .service import build_account_detail_payload, build_analysis_payload, build_two_stage_payload
 
 
@@ -50,16 +51,25 @@ def filter_options(repository: ClickHouseRepository = Depends(get_repository)) -
 @app.post("/api/abook/analysis")
 def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depends(get_repository)) -> dict:
     try:
-        rows = repository.fetch_analysis(request)
+        risk_filter = build_local_risk_filter(request)
+        effective_request = risk_filter.apply(request)
+        if risk_filter.is_empty_for(request):
+            rows = []
+        else:
+            excluded_logins = risk_filter.excluded_logins
+            rows = repository.fetch_analysis(effective_request, excluded_logins=excluded_logins) if excluded_logins else repository.fetch_analysis(effective_request)
+        rows = risk_filter.snapshot.enrich_rows(rows)
         if request.lookback_months is not None:
-            return build_analysis_payload(
+            payload = build_analysis_payload(
                 rows,
                 request.lookback_months,
                 min_profit_factor=request.min_profit_factor if request.min_profit_factor is not None else request.rules.min_profit_factor,
                 min_avg_daily_profit=request.min_avg_daily_profit if request.min_avg_daily_profit is not None else request.rules.min_avg_daily_profit,
             )
+            payload["risk_management"] = risk_filter.summary()
+            return payload
         rules = request.rules
-        return build_two_stage_payload(
+        payload = build_two_stage_payload(
             rows,
             selection_start=request.selection.start.isoformat(),
             selection_end=request.selection.end.isoformat(),
@@ -74,13 +84,17 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             min_selection_monthly_consistency=rules.min_selection_monthly_consistency,
             neutral_band_usd=rules.neutral_band_usd,
             min_positive_month_rate=rules.min_positive_month_rate,
-            max_top_day_concentration=rules.max_top_day_concentration,
+            max_top1_day_profit_contribution=rules.max_top1_day_profit_contribution,
+            max_peak_leverage_ratio=rules.max_peak_leverage_ratio,
+            risk_snapshot_status=risk_filter.status,
             min_direction_day_rate_lower_bound=rules.min_direction_day_rate_lower_bound,
             min_stability_score=rules.min_stability_score,
             high_confidence_trades=rules.high_confidence_trades,
             high_confidence_days=rules.high_confidence_days,
             exclude_test_accounts=request.exclude_test_accounts,
         )
+        payload["risk_management"] = risk_filter.summary()
+        return payload
     except RepositoryConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 clickhouse.md
+data/user_risk_snapshot.json
+data/user_risk_snapshot.json.tmp

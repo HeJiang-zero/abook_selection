@@ -23,6 +23,7 @@ def build_analysis_query(
     selection_end: str | None = None,
     validation_start: str | None = None,
     validation_end: str | None = None,
+    excluded_logins: set[tuple[str, int]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Build one monthly fact query covering both selection and validation windows."""
     clean_platforms = [platform for platform in platforms if platform in ALLOWED_PLATFORMS]
@@ -50,8 +51,24 @@ def build_analysis_query(
         params["group_0"] = values
         user_conditions.append("has({group_0:Array(String)}, `group`)")
     if filters.get("logins"):
-        params["login_0"] = [int(login) for login in filters["logins"]]
-        user_conditions.append("has({login_0:Array(UInt64)}, login)")
+        login_values = sorted({int(login) for login in filters["logins"]})
+        if len(login_values) <= 2000:
+            params["login_0"] = login_values
+            user_conditions.append("has({login_0:Array(UInt64)}, login)")
+        else:
+            # clickhouse_connect puts query parameters in the HTTP URL. A large
+            # allowed-login array causes HTTP 414, so embed only validated ints
+            # in the query text; the list originates from the local snapshot.
+            user_conditions.append(f"login IN ({','.join(str(login) for login in login_values)})")
+    if excluded_logins:
+        by_platform: dict[str, list[int]] = {}
+        for platform, login in sorted(excluded_logins):
+            by_platform.setdefault(str(platform), []).append(int(login))
+        excluded_predicates = [
+            f"(platform = '{platform}' AND login IN ({','.join(str(login) for login in sorted(logins))}))"
+            for platform, logins in sorted(by_platform.items())
+        ]
+        user_conditions.append("NOT (" + " OR ".join(excluded_predicates) + ")")
 
     user_where = " AND ".join(user_conditions)
     query = f"""

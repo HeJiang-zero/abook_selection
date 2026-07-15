@@ -24,7 +24,8 @@ def test_default_strategy_filters_are_profit_factor_and_average_daily_profit():
     assert request.selection.start.isoformat() == "2026-05-01"
     assert request.validation.end.isoformat() == "2026-07-13"
     assert request.rules.min_positive_month_rate == 1.0
-    assert request.rules.max_top_day_concentration == 0.5
+    assert request.rules.max_top1_day_profit_contribution == 0.2
+    assert request.rules.max_peak_leverage_ratio == 5.0
     assert request.rules.min_direction_day_rate_lower_bound == 0.55
     assert request.rules.min_stability_score == 70
     assert request.rules.min_win_rate == 0.5
@@ -43,3 +44,8 @@ def test_analysis_request_accepts_separate_selection_and_validation_rules():
     assert request.rules.min_active_days == 8
     assert request.rules.neutral_band_usd == 15
     assert request.exclude_test_accounts is False
+
+
+def test_old_position_management_rule_is_rejected():
+    with pytest.raises(ValidationError):
+        AnalysisRequest(rules={"max_top_day_concentration": 0.5})

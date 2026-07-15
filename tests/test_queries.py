@@ -34,6 +34,36 @@ def test_analysis_query_only_adds_group_and_login_filters():
     assert params["group_0"] == ["real\\FPlive"]
 
 
+def test_analysis_query_does_not_reintroduce_runtime_position_proxy():
+    query, _ = build_analysis_query(
+        platforms=["mt5"], start="2026-05-01", end="2026-07-13", lookback_months=3,
+        filters={},
+    )
+
+    assert "max_trade_volume" not in query
+    assert "max_top_day_concentration" not in query
+
+
+def test_analysis_query_embeds_large_local_login_list_to_avoid_http_url_414():
+    logins = list(range(3000))
+    query, params = build_analysis_query(
+        platforms=["mt5"], start="2026-05-01", end="2026-07-13", lookback_months=3,
+        filters={"logins": logins},
+    )
+
+    assert "login IN (0,1,2" in query
+    assert "login_0" not in params
+
+
+def test_analysis_query_can_exclude_large_local_risk_login_set():
+    query, _ = build_analysis_query(
+        platforms=["mt5"], start="2026-05-01", end="2026-07-13", lookback_months=3,
+        filters={}, excluded_logins={("mt5", login) for login in range(3000)},
+    )
+
+    assert "NOT ((platform = 'mt5' AND login IN (0,1,2" in query
+
+
 def test_analysis_query_builds_full_months_and_excludes_test_accounts():
     query, params = build_analysis_query(
         platforms=["mt5"],

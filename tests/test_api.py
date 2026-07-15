@@ -31,7 +31,7 @@ def test_analysis_rejects_unsupported_lookback_months():
 
 def test_analysis_returns_dashboard_payload_from_repository_rows():
     class FakeRepository:
-        def fetch_analysis(self, request):
+        def fetch_analysis(self, request, excluded_logins=None):
             return [{
                 "platform": "mt5", "login": 1, "account_group": "real", "country": "Brazil",
                 "leverage": 100, "registration": datetime(2026, 1, 1), "last_access": datetime(2026, 7, 1),
@@ -57,7 +57,7 @@ def test_analysis_returns_dashboard_payload_from_repository_rows():
 
 def test_analysis_returns_two_stage_payload_for_new_request():
     class FakeRepository:
-        def fetch_analysis(self, request):
+        def fetch_analysis(self, request, excluded_logins=None):
             rows = []
             for month, net, market in (("2026-05-01", 120, 130), ("2026-06-01", 100, 110), ("2026-07-01", 70, 80)):
                 rows.append({
@@ -67,6 +67,8 @@ def test_analysis_returns_two_stage_payload_for_new_request():
                     "gross_wins": Decimal("180"), "gross_losses": Decimal("-60"), "costs": Decimal("-10"),
                     "client_net_pnl": Decimal(str(net)), "funding_pnl": Decimal("0"), "active_trade_days": 10,
                     "daily_profit_sum": Decimal(str(net)), "positive_profit_days": 8, "negative_profit_days": 2,
+                    "daily_positive_sum": Decimal("100"), "daily_negative_sum": Decimal("-10"),
+                    "max_positive_day": Decimal("10"), "min_negative_day": Decimal("-2"),
                     "flat_profit_days": 0, "turnover": Decimal("100"), "avg_holding_seconds": Decimal("5"),
                     "median_holding_seconds": Decimal("5"), "long_trades": 15, "short_trades": 5, "symbols_traded": 1,
                 })
@@ -76,7 +78,7 @@ def test_analysis_returns_two_stage_payload_for_new_request():
     try:
         response = client.post(
             "/api/abook/analysis",
-            json={"rules": {"min_stability_score": 72, "max_top_day_concentration": 0.4}},
+            json={"rules": {"min_stability_score": 72, "max_top1_day_profit_contribution": 0.4}},
         )
     finally:
         app.dependency_overrides.clear()
@@ -86,4 +88,4 @@ def test_analysis_returns_two_stage_payload_for_new_request():
     assert body["selection"]["counts"]["abook_candidates"] == 1
     assert body["coverage"]["validation_partial"] is True
     assert body["rules"]["min_stability_score"] == 72
-    assert body["rules"]["max_top_day_concentration"] == 0.4
+    assert body["rules"]["max_top1_day_profit_contribution"] == 0.4

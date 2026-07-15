@@ -18,7 +18,7 @@ export CLICKHOUSE_SECURE=0
 
 打开 http://localhost:8000。生产环境请使用只读 ClickHouse 账号，并通过密钥管理注入 `CLICKHOUSE_PASSWORD`。
 
-默认筛选规则为：Abook 候选满足交易笔数 `>= 20`、活跃交易天数 `>= 5`、胜率 `>= 50%`、`Profit Factor > 1`、盈亏比 `>= 1`、平均交易日净利润 `> 10 USD`、5–6 月月度持续性 `>= 50%`、单日利润/风险集中度 `<= 50%`；Bbook 候选使用对应的亏损方向条件。平均交易日利润定义为：阶段内用户净交易 P&L（`profit + storage + commission + fee`，仅 `action IN (0,1)`）除以有交易的自然日数量。账户没有亏损交易时，PF 在筛选上视为无穷大，API 中以 `null` 表示，避免 JSON 非法数值。
+默认筛选规则为：Abook 候选满足交易笔数 `>= 20`、活跃交易天数 `>= 5`、胜率 `>= 50%`、`Profit Factor > 1`、盈亏比 `>= 1`、平均交易日净利润 `> 10 USD`、5–6 月月度持续性 `>= 50%`、Top1 日利润贡献率 `< 20%`、峰值杠杆率 `<= 5`；Bbook 候选使用对应的亏损方向条件。平均交易日利润定义为：阶段内用户净交易 P&L（`profit + storage + commission + fee`，仅 `action IN (0,1)`）除以有交易的自然日数量。账户没有亏损交易时，PF 在筛选上视为无穷大，API 中以 `null` 表示，避免 JSON 非法数值。
 
 账户组中不区分大小写包含 `test` 或 `demo` 的账户是测试账号，所有查询、服务层聚合和账户详情都会硬性排除，即使请求传入 `exclude_test_accounts=false` 也不会放行。7 月验证阶段会保留没有交易的筛选账户，并标记为“无交易”。
 
@@ -42,7 +42,8 @@ export CLICKHOUSE_SECURE=0
     "min_avg_daily_profit": 10,
     "neutral_band_usd": 10,
     "min_positive_month_rate": 1.0,
-    "max_top_day_concentration": 0.5,
+  "max_top1_day_profit_contribution": 0.2,
+  "max_peak_leverage_ratio": 5,
     "min_direction_day_rate_lower_bound": 0.55,
     "min_stability_score": 70
   },
@@ -54,9 +55,23 @@ export CLICKHOUSE_SECURE=0
 
 当前 Abook 利润影响是理论估算：假设进入 Abook 后交易所的对手盘利润为 0，因此迁移增量为用户净交易 P&L；不包含真实外部成交、点差、对冲成本、滑点和流动性成本。
 
+## 本地风险快照
+
+杠杆筛选不在每次页面请求中重新聚合。使用以下命令按筛选期生成本地快照：
+
+```bash
+.venv/bin/python scripts/build_user_risk_snapshot.py --selection-start 2026-05-01 --selection-end 2026-06-30
+```
+
+快照默认写入 `data/user_risk_snapshot.json`，也可用 `ABOOK_RISK_SNAPSHOT_PATH` 覆盖路径。快照使用 matched trades 的 `turnover` 计算平均开仓程度和峰值杠杆率，并且 SQL 会排除 group 中大小写不敏感包含 `test` 或 `demo` 的账户，例如 `real\\FPlive\\TEST_USD_ZO_BA_NT_H`、`demo\\HHdemo\\forexhh-USD`。该本地文件不会提交到 GitHub。
+
+全量风险名单会在用户 SQL 中按平台生成安全的 Login 排除条件，避免把数万 Login 放进 HTTP 参数导致 414；只有指定少量 Login 时才使用交集过滤。
+
+`balance_prev_month` 为空或小于等于 0 时不会把杠杆率伪造为 0：该用户标记为 `unknown_nonpositive_balance`，跳过杠杆上限，但继续执行胜率、PF、盈亏比、月度持续性和 Top1 日贡献率筛选。快照缺失或日期不匹配时，页面会显示风险快照状态，不会声称杠杆过滤已生效。
+
 页面顶部的 Abook / Bbook 盈亏分析按 Core 候选组分别展示筛选期和验证期的账户数、盈利/亏损/中性账户、毛盈利、毛亏损、净 P&L、当前 Bbook 利润和假设 Abook 利润；理论增量只展示 7 月样本外验证期。Abook 理论增量定义为：`假设 Abook 利润 - 当前 Bbook 利润`；在当前没有外部 Abook 成交数据时，假设 Abook 利润为 0，因此它不是实际可实现利润。
 
-这里的 `Profit Factor` 不是单笔交易的传统盈亏比：PF = 阶段总盈利 ÷ 阶段总亏损绝对值；页面的“盈亏比”是 `Payoff Ratio = 平均盈利交易 ÷ 平均亏损交易绝对值`。胜率、Payoff Ratio 和 PF 必须结合使用，单独提高胜率可能得到小赚大亏的策略。当前没有完整的保证金、止损距离或最大持仓风险字段，因此“单日利润/风险集中度”只是仓位管理的风险代理，不等同于账户真实风险率。
+这里的 `Profit Factor` 不是单笔交易的传统盈亏比：PF = 阶段总盈利 ÷ 阶段总亏损绝对值；页面的“盈亏比”是 `Payoff Ratio = 平均盈利交易 ÷ 平均亏损交易绝对值`。胜率、Payoff Ratio 和 PF 必须结合使用，单独提高胜率可能得到小赚大亏的策略。当前杠杆率使用交易名义金额 / 上月余额，是仓位管理的可审计代理，不等同于平台真实保证金风险率或净敞口。
 
 ## 稳定性与反过拟合指标
 

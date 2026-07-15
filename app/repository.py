@@ -37,7 +37,11 @@ class ClickHouseRepository:
         result = self.client.query(query, parameters=params)
         return [dict(zip(result.column_names, row)) for row in result.result_rows]
 
-    def fetch_analysis(self, request: AnalysisRequest) -> list[dict[str, Any]]:
+    def fetch_analysis(
+        self,
+        request: AnalysisRequest,
+        excluded_logins: set[tuple[str, int]] | None = None,
+    ) -> list[dict[str, Any]]:
         if request.lookback_months is not None:
             start = request.start or request.selection.start
             end = request.end or request.validation.end
@@ -53,6 +57,7 @@ class ClickHouseRepository:
             lookback_months=lookback_months,
             filters=request.filters.model_dump(),
             exclude_test_accounts=request.exclude_test_accounts,
+            excluded_logins=excluded_logins,
             selection_start=request.selection.start.isoformat(),
             selection_end=request.selection.end.isoformat(),
             validation_start=request.validation.start.isoformat(),

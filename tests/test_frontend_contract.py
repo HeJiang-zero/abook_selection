@@ -19,6 +19,9 @@ def test_frontend_exposes_two_stage_controls_and_validation_sections():
     assert "筛选期理论增量" not in html
     assert "monthly_consistency_ratio" in html or "最低月度持续性" in html
     assert "待应用参数" in html
+    assert "Top1 日利润贡献率" in html
+    assert "最大峰值杠杆率" in html
+    assert "max_top_day_concentration" not in html
 
 
 def test_frontend_uses_two_stage_payload_fields():
@@ -32,6 +35,7 @@ def test_frontend_uses_two_stage_payload_fields():
     assert "theoretical_increment" in (ROOT / "static" / "index.html").read_text()
     assert "validation_incremental_change" in (ROOT / "static" / "index.html").read_text()
     assert "rulesDirty" in javascript
+    assert "max_peak_leverage_ratio" in javascript
 
 
 def test_frontend_exposes_stability_controls_and_interactive_account_table():

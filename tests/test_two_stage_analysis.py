@@ -98,7 +98,7 @@ def test_two_stage_analysis_separates_selection_and_validation_and_keeps_inactiv
         min_avg_daily_profit=10,
         neutral_band_usd=10,
         min_positive_month_rate=0,
-        max_top_day_concentration=1,
+        max_top1_day_profit_contribution=1,
         min_direction_day_rate_lower_bound=0,
         min_stability_score=0,
     )
@@ -155,7 +155,7 @@ def test_two_stage_analysis_reports_transition_precision_lift_and_abook_delta():
         min_profit_factor=1,
         min_avg_daily_profit=10,
         min_positive_month_rate=0,
-        max_top_day_concentration=1,
+        max_top1_day_profit_contribution=1,
         min_direction_day_rate_lower_bound=0,
         min_stability_score=0,
     )
@@ -202,7 +202,7 @@ def test_two_stage_analysis_requires_win_rate_monthly_consistency_and_risk_conce
         min_trades=20, min_active_days=5, min_profit_factor=1,
         min_avg_daily_profit=0, min_win_rate=0.6,
         min_selection_monthly_consistency=0.5,
-        min_positive_month_rate=0, max_top_day_concentration=0.75,
+        min_positive_month_rate=0, max_top1_day_profit_contribution=0.75,
         min_direction_day_rate_lower_bound=0, min_stability_score=0,
     )
 
@@ -211,6 +211,63 @@ def test_two_stage_analysis_requires_win_rate_monthly_consistency_and_risk_conce
     assert accounts[22]["base_cohort"] == "observation"
     assert accounts[23]["base_cohort"] == "observation"
     assert accounts[21]["selection"]["monthly_consistency_ratio"] == 0.6
+
+
+def test_two_stage_analysis_requires_strict_top1_contribution_and_skips_leverage_for_zero_balance():
+    diffuse = [
+        row(31, "05", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100,
+            daily_positive_sum=100, max_positive_day=19),
+        row(31, "06", trades=20, wins=14, losses=6, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100,
+            daily_positive_sum=100, max_positive_day=19),
+    ]
+    exactly_twenty = [
+        row(32, "05", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100,
+            daily_positive_sum=100, max_positive_day=40),
+        row(32, "06", trades=20, wins=14, losses=6, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100,
+            daily_positive_sum=100, max_positive_day=40),
+    ]
+    high_leverage = [
+        row(33, "05", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100,
+            daily_positive_sum=100, max_positive_day=19),
+        row(33, "06", trades=20, wins=14, losses=6, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100,
+            daily_positive_sum=100, max_positive_day=19),
+    ]
+    zero_balance = [
+        row(34, "05", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100,
+            daily_positive_sum=100, max_positive_day=19),
+        row(34, "06", trades=20, wins=14, losses=6, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100,
+            daily_positive_sum=100, max_positive_day=19),
+    ]
+    for item in high_leverage:
+        item.update(risk_balance_prev_month=100, risk_balance_status="positive", risk_peak_leverage_ratio=8)
+    for item in zero_balance:
+        item.update(risk_balance_prev_month=0, risk_balance_status="unknown_nonpositive_balance", risk_peak_leverage_ratio=None)
+
+    result = build_two_stage_payload(
+        diffuse + exactly_twenty + high_leverage + zero_balance,
+        selection_start="2026-05-01", selection_end="2026-06-30",
+        validation_start="2026-07-01", validation_end="2026-07-13",
+        min_trades=20, min_active_days=5, min_profit_factor=1,
+        min_avg_daily_profit=0, min_win_rate=0.5,
+        min_selection_monthly_consistency=0.5,
+        max_top1_day_profit_contribution=0.2, max_peak_leverage_ratio=5,
+        min_positive_month_rate=0, min_direction_day_rate_lower_bound=0,
+        min_stability_score=0,
+    )
+
+    accounts = {account["login"]: account for account in result["accounts"]}
+    assert accounts[31]["cohort"] == "abook_candidate"
+    assert accounts[32]["base_cohort"] == "observation"
+    assert accounts[33]["base_cohort"] == "observation"
+    assert accounts[34]["cohort"] == "abook_candidate"
 
 
 def test_two_stage_analysis_keeps_test_accounts_excluded_even_when_override_is_false():
@@ -224,7 +281,7 @@ def test_two_stage_analysis_keeps_test_accounts_excluded_even_when_override_is_f
         selection_start="2026-05-01", selection_end="2026-06-30",
         validation_start="2026-07-01", validation_end="2026-07-13",
         min_positive_month_rate=0,
-        max_top_day_concentration=1,
+        max_top1_day_profit_contribution=1,
         min_direction_day_rate_lower_bound=0,
         min_stability_score=0,
         exclude_test_accounts=False,
@@ -242,7 +299,7 @@ def test_two_stage_analysis_excludes_demo_accounts_by_default():
         selection_start="2026-05-01", selection_end="2026-06-30",
         validation_start="2026-07-01", validation_end="2026-07-13",
         min_positive_month_rate=0,
-        max_top_day_concentration=1,
+        max_top1_day_profit_contribution=1,
         min_direction_day_rate_lower_bound=0,
         min_stability_score=0,
     )
@@ -288,7 +345,7 @@ def test_two_stage_analysis_exposes_monthly_company_profit_and_july_book_split()
         selection_start="2026-05-01", selection_end="2026-06-30",
         validation_start="2026-07-01", validation_end="2026-07-13",
         min_positive_month_rate=0,
-        max_top_day_concentration=1,
+        max_top1_day_profit_contribution=1,
         min_direction_day_rate_lower_bound=0,
         min_stability_score=0,
     )
@@ -482,7 +539,7 @@ def test_two_stage_analysis_exposes_book_performance_and_finite_payload():
         validation_start="2026-07-01", validation_end="2026-07-13",
         min_trades=20, min_active_days=5, min_profit_factor=1,
         min_avg_daily_profit=9, min_positive_month_rate=0,
-        max_top_day_concentration=1, min_direction_day_rate_lower_bound=0,
+        max_top1_day_profit_contribution=1, min_direction_day_rate_lower_bound=0,
         min_stability_score=0,
     )
 
