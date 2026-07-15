@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from calendar import monthrange
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 import math
 from typing import Any, Iterable, Optional
@@ -802,10 +802,91 @@ def _book_performance(accounts: list[dict[str, Any]], phase: str) -> dict[str, A
     }
 
 
+def _daily_book_series(
+    daily_rows: Iterable[dict[str, Any]],
+    overview_daily_rows: Iterable[dict[str, Any]] | None,
+    accounts: list[dict[str, Any]],
+    selection_start: str,
+    selection_end: str,
+    validation_start: str,
+    validation_end: str,
+) -> list[dict[str, Any]]:
+    """Aggregate account-day P&L into Abook and display Bbook series."""
+    selection_start_date = date.fromisoformat(selection_start)
+    selection_end_date = date.fromisoformat(selection_end)
+    validation_start_date = date.fromisoformat(validation_start)
+    validation_end_date = date.fromisoformat(validation_end)
+    start_date = min(selection_start_date, validation_start_date)
+    end_date = max(selection_end_date, validation_end_date)
+
+    def row_date(row: dict[str, Any]) -> date:
+        value = row.get("trade_date")
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        return date.fromisoformat(str(value)[:10])
+
+    account_books = {
+        (str(account["platform"]), int(account["login"])):
+            "abook" if account["cohort"] == "abook_candidate" else "bbook"
+        for account in accounts
+    }
+    effective_rows = list(daily_rows or [])
+    population_rows = list(overview_daily_rows) if overview_daily_rows is not None else effective_rows
+    company_by_day: defaultdict[date, Decimal] = defaultdict(lambda: ZERO)
+    for row in population_rows:
+        day = row_date(row)
+        if start_date <= day <= end_date:
+            company_by_day[day] += _finite_decimal(row.get("client_net_pnl"))
+
+    books_by_day: defaultdict[date, dict[str, dict[str, Decimal]]] = defaultdict(
+        lambda: {
+            "abook": {"net_pnl": ZERO, "profitable_pnl": ZERO, "loss_pnl": ZERO},
+            "bbook": {"net_pnl": ZERO, "profitable_pnl": ZERO, "loss_pnl": ZERO},
+        }
+    )
+    for row in effective_rows:
+        day = row_date(row)
+        book_name = account_books.get((str(row.get("platform")), int(row.get("login", 0))))
+        if book_name is None or not start_date <= day <= end_date:
+            continue
+        value = _finite_decimal(row.get("client_net_pnl"))
+        book = books_by_day[day][book_name]
+        book["net_pnl"] += value
+        if value > ZERO:
+            book["profitable_pnl"] += value
+        elif value < ZERO:
+            book["loss_pnl"] += value
+
+    series = []
+    current = start_date
+    while current <= end_date:
+        if selection_start_date <= current <= selection_end_date:
+            phase = "selection"
+        elif validation_start_date <= current <= validation_end_date:
+            phase = "validation"
+        else:
+            current += timedelta(days=1)
+            continue
+        books = books_by_day[current]
+        series.append({
+            "date": current.isoformat(),
+            "phase": phase,
+            "company_net_pnl": _float(-company_by_day[current]),
+            "abook": {key: _float(value) for key, value in books["abook"].items()},
+            "bbook": {key: _float(value) for key, value in books["bbook"].items()},
+        })
+        current += timedelta(days=1)
+    return series
+
+
 def build_two_stage_payload(
     rows: Iterable[dict[str, Any]],
     *,
     overview_rows: Iterable[dict[str, Any]] | None = None,
+    daily_rows: Iterable[dict[str, Any]] | None = None,
+    overview_daily_rows: Iterable[dict[str, Any]] | None = None,
     selection_start: str,
     selection_end: str,
     validation_start: str,
@@ -990,6 +1071,15 @@ def build_two_stage_payload(
         cohort: [account for account in accounts if account["cohort"] == cohort]
         for cohort in ("abook_candidate", "bbook_candidate", "observation")
     }
+    daily_book_series = _daily_book_series(
+        daily_rows or [],
+        overview_daily_rows,
+        accounts,
+        selection_start,
+        selection_end,
+        validation_start,
+        validation_end,
+    )
     population_counts = [
         int(row["population_unique_accounts"])
         for row in overview_materialized
@@ -1157,16 +1247,17 @@ def build_two_stage_payload(
         },
         "company_profit_definition": "book company profit = - user net trading P&L; Abook assumed company profit = 0",
     }
+    display_bbook_accounts = by_cohort["bbook_candidate"] + by_cohort["observation"]
     book_performance = {
         "selection": {
             "abook": _book_performance(by_cohort["abook_candidate"], "selection"),
-            "bbook": _book_performance(by_cohort["bbook_candidate"], "selection"),
+            "bbook": _book_performance(display_bbook_accounts, "selection"),
         },
         "validation": {
             "abook": _book_performance(by_cohort["abook_candidate"], "validation"),
-            "bbook": _book_performance(by_cohort["bbook_candidate"], "validation"),
+            "bbook": _book_performance(display_bbook_accounts, "validation"),
         },
-        "definition": "Abook theoretical increment = assumed Abook profit - current Bbook profit; assumed Abook profit is 0 until external execution data is available.",
+        "definition": "Abook theoretical increment = assumed Abook profit - current Bbook profit; displayed Bbook includes Bbook Core and observation accounts; assumed Abook profit is 0 until external execution data is available.",
     }
 
     validation_end_date = date.fromisoformat(validation_end)
@@ -1252,6 +1343,7 @@ def build_two_stage_payload(
         "personal_candidate_list": personal_info,
         "profit_overview": profit_overview,
         "book_performance": book_performance,
+        "daily_book_series": daily_book_series,
         "monthly_series": monthly_series,
         "accounts": [account for account in accounts if account["has_nonzero_pnl"]],
     }

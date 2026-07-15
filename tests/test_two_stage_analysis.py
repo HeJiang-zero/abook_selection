@@ -61,6 +61,76 @@ def row(login, month, *, group="real\\FPlive", trades=0, wins=0, losses=0,
     }
 
 
+def daily_row(login, day, net, market=None, trades=1):
+    return {
+        "platform": "mt5",
+        "login": login,
+        "trade_date": datetime.fromisoformat(day),
+        "client_net_pnl": Decimal(str(net)),
+        "market_pnl": Decimal(str(market if market is not None else net)),
+        "matched_trades": trades,
+    }
+
+
+def test_two_stage_payload_builds_daily_book_series_and_merges_observation_into_bbook():
+    rows = [
+        row(1, "05", trades=20, wins=15, losses=5, market=100, net=80,
+            gross_wins=100, gross_losses=0, active_days=10, daily_sum=80),
+        row(1, "06", trades=20, wins=15, losses=5, market=100, net=80,
+            gross_wins=100, gross_losses=0, active_days=10, daily_sum=80),
+        row(2, "05", trades=20, wins=4, losses=16, market=-100, net=-80,
+            gross_wins=20, gross_losses=-100, active_days=10, daily_sum=-80),
+        row(2, "06", trades=20, wins=4, losses=16, market=-100, net=-80,
+            gross_wins=20, gross_losses=-100, active_days=10, daily_sum=-80),
+        row(3, "05", trades=1, wins=1, losses=0, market=5, net=5,
+            active_days=1, daily_sum=5),
+    ]
+    daily = [
+        daily_row(1, "2026-05-15", 30), daily_row(1, "2026-05-16", -10),
+        daily_row(2, "2026-05-15", -25), daily_row(2, "2026-05-16", -5),
+        daily_row(3, "2026-05-15", 7),
+    ]
+    result = build_two_stage_payload(
+        rows, daily_rows=daily, overview_daily_rows=daily,
+        selection_start="2026-05-01", selection_end="2026-06-30",
+        validation_start="2026-07-01", validation_end="2026-07-02",
+        min_trades=0, min_active_days=0, min_profit_factor=1, min_payoff_ratio=0,
+        min_avg_daily_profit=-100, min_positive_month_rate=0,
+        max_top1_day_profit_contribution=2,
+        min_direction_day_rate_lower_bound=0, min_stability_score=0,
+    )
+
+    series = {item["date"]: item for item in result["daily_book_series"]}
+    assert series["2026-05-15"]["company_net_pnl"] == -12.0
+    assert series["2026-05-15"]["abook"] == {"net_pnl": 30.0, "profitable_pnl": 30.0, "loss_pnl": 0.0}
+    assert series["2026-05-15"]["bbook"] == {"net_pnl": -18.0, "profitable_pnl": 7.0, "loss_pnl": -25.0}
+    assert series["2026-05-16"]["bbook"]["net_pnl"] == -5.0
+    assert series["2026-05-16"]["abook"]["loss_pnl"] == -10.0
+    assert series["2026-06-01"]["company_net_pnl"] == 0.0
+    assert result["book_performance"]["selection"]["bbook"]["accounts"] == 2
+
+
+def test_daily_company_line_uses_population_rows_when_effective_rows_are_filtered():
+    rows = [
+        row(1, "05", trades=20, wins=15, losses=5, market=100, net=80,
+            gross_wins=100, gross_losses=0, active_days=10, daily_sum=80),
+    ]
+    effective_daily = [daily_row(1, "2026-05-15", 30)]
+    overview_daily = effective_daily + [daily_row(9, "2026-05-15", -50)]
+
+    result = build_two_stage_payload(
+        rows, daily_rows=effective_daily, overview_daily_rows=overview_daily,
+        selection_start="2026-05-01", selection_end="2026-05-31",
+        validation_start="2026-07-01", validation_end="2026-07-02",
+        min_trades=0, min_active_days=0, min_profit_factor=1, min_payoff_ratio=0,
+        min_avg_daily_profit=-100, min_positive_month_rate=0,
+        max_top1_day_profit_contribution=2,
+        min_direction_day_rate_lower_bound=0, min_stability_score=0,
+    )
+
+    assert result["daily_book_series"][14]["company_net_pnl"] == 20.0
+
+
 def test_two_stage_analysis_separates_selection_and_validation_and_keeps_inactive_users():
     rows = [
         row(1, "05", trades=20, wins=15, losses=5, market=120, net=110,
