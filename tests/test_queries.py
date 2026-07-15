@@ -86,10 +86,10 @@ def test_analysis_query_builds_full_months_and_excludes_test_accounts():
     assert params["start"] == "2026-05-01"
 
 
-def test_analysis_query_always_excludes_test_accounts_even_when_override_is_false():
+def test_analysis_query_always_excludes_test_accounts():
     query, _ = build_analysis_query(
         platforms=["mt5"], start="2026-05-01", end="2026-07-13", lookback_months=3,
-        filters={}, exclude_test_accounts=False,
+        filters={},
     )
 
     assert "positionCaseInsensitive(`group`, 'test') = 0" in query
@@ -110,7 +110,7 @@ def test_analysis_query_exposes_raw_and_active_deal_coverage():
 def test_analysis_query_uses_tuple_population_and_canonical_deals_pnl():
     query, _ = build_analysis_query(
         platforms=["mt5", "hh_mt5"], start="2026-05-01", end="2026-07-13", lookback_months=3,
-        filters={}, exclude_test_accounts=False,
+        filters={},
     )
 
     assert "uniqExact(tuple(platform, login)) AS unique_account_count" in query

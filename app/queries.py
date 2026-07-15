@@ -18,7 +18,6 @@ def build_analysis_query(
     end: str,
     lookback_months: int,
     filters: dict[str, Any] | None = None,
-    exclude_test_accounts: bool = True,
     selection_start: str | None = None,
     selection_end: str | None = None,
     validation_start: str | None = None,

@@ -20,7 +20,7 @@ export CLICKHOUSE_SECURE=0
 
 默认筛选规则为：Abook 候选满足交易笔数 `>= 20`、活跃交易天数 `>= 10`、胜率 `>= 50%`、`Profit Factor > 1`、盈亏比 `>= 0.8`、平均交易日净利润 `> 0 USD`、盈利月份占比 `>= 50%`、日盈利率 95% 下限 `>= 55%`、稳定性评分 `>= 70`、Top1 日利润贡献率 `< 20%`、峰值杠杆率 `<= 200`。月度持续性参数保留为可选增强条件，默认不额外收紧筛选。峰值杠杆超过 200 时，仅筛选期中位持仓不超过 300 秒的用户保留为短持仓例外；Bbook 候选使用对应的亏损方向条件。平均交易日利润定义为：阶段内用户净交易 P&L（`profit + storage + commission + fee`，仅 `action IN (0,1)`）除以有交易的自然日数量。账户没有亏损交易时，PF 在筛选上视为无穷大，API 中以 `null` 表示，避免 JSON 非法数值。
 
-账户组中不区分大小写包含 `test` 或 `demo` 的账户是测试账号，所有查询、服务层聚合和账户详情都会硬性排除，即使请求传入 `exclude_test_accounts=false` 也不会放行。7 月验证阶段会保留没有交易的筛选账户，并标记为“无交易”。
+账户组中不区分大小写包含 `test` 或 `demo` 的账户是测试账号，所有查询、服务层聚合和账户详情都会硬性排除。7 月验证阶段会保留没有交易的筛选账户，并标记为“无交易”。
 
 左侧“个人候选名单（加入 Abook）”默认关闭；开启后读取 `ABOOK_PERSONAL_CANDIDATE_LIST_PATH` 指定的 CSV，未设置时使用本机的个人候选名单路径。名单只作为 Abook 强制加入名单，仍受平台、账户组和 test/demo 边界约束，并按 `(platform, login)` 去重。
 
@@ -44,15 +44,13 @@ export CLICKHOUSE_SECURE=0
     "min_profit_factor": 1,
     "min_payoff_ratio": 0.8,
     "min_avg_daily_profit": 0,
-    "neutral_band_usd": 10,
     "min_positive_month_rate": 0.5,
     "max_top1_day_profit_contribution": 0.2,
     "max_peak_leverage_ratio": 200,
     "max_high_leverage_holding_seconds": 300,
     "min_direction_day_rate_lower_bound": 0.55,
     "min_stability_score": 70
-  },
-  "exclude_test_accounts": true
+  }
 }
 ```
 

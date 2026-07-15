@@ -56,7 +56,6 @@ class ClickHouseRepository:
             end=end.isoformat(),
             lookback_months=lookback_months,
             filters=request.filters.model_dump(),
-            exclude_test_accounts=request.exclude_test_accounts,
             excluded_logins=excluded_logins,
             selection_start=request.selection.start.isoformat(),
             selection_end=request.selection.end.isoformat(),

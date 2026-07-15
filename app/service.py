@@ -11,6 +11,7 @@ from .metrics import calculate_drawdown
 
 
 ZERO = Decimal("0")
+NEUTRAL_BAND_USD = Decimal("10")
 
 
 def _safe_ratio(numerator: Decimal, denominator: Decimal) -> float:
@@ -639,12 +640,12 @@ def _correlation(pairs: list[tuple[Decimal, Decimal]]) -> float:
     return _ratio(numerator, denominator)
 
 
-def _group_summary(accounts: list[dict[str, Any]], neutral_band_usd: float, target: Optional[str] = None) -> dict[str, Any]:
+def _group_summary(accounts: list[dict[str, Any]], target: Optional[str] = None) -> dict[str, Any]:
     total = len(accounts)
     active = [account for account in accounts if account["validation"]["trade_count"] > 0]
     validation_values = [Decimal(str(account["validation"]["client_net_pnl"])) for account in accounts]
-    positive = sum(1 for value in validation_values if value > Decimal(str(neutral_band_usd)))
-    negative = sum(1 for value in validation_values if value < Decimal(str(-neutral_band_usd)))
+    positive = sum(1 for value in validation_values if value > NEUTRAL_BAND_USD)
+    negative = sum(1 for value in validation_values if value < -NEUTRAL_BAND_USD)
     total_trades = sum(account["validation"]["trade_count"] for account in accounts)
     total_wins = sum(account["validation"]["winning_trades"] for account in accounts)
     total_days = sum(account["validation"]["active_trade_days"] for account in accounts)
@@ -710,12 +711,12 @@ def _group_summary(accounts: list[dict[str, Any]], neutral_band_usd: float, targ
     }
 
 
-def _status(value: float, trade_count: int, neutral_band_usd: float) -> str:
+def _status(value: float, trade_count: int) -> str:
     if trade_count <= 0:
         return "inactive"
-    if value > neutral_band_usd:
+    if value > float(NEUTRAL_BAND_USD):
         return "profitable"
-    if value < -neutral_band_usd:
+    if value < -float(NEUTRAL_BAND_USD):
         return "loss"
     return "neutral"
 
@@ -776,9 +777,9 @@ def _book_split_summary(accounts: list[dict[str, Any]], *, abook: bool) -> dict[
     }
 
 
-def _book_performance(accounts: list[dict[str, Any]], phase: str, neutral_band_usd: float) -> dict[str, Any]:
+def _book_performance(accounts: list[dict[str, Any]], phase: str) -> dict[str, Any]:
     values = [_finite_decimal(account[phase].get("client_net_pnl")) for account in accounts]
-    neutral = Decimal(str(neutral_band_usd))
+    neutral = NEUTRAL_BAND_USD
     profitable = [value for value in values if value > neutral]
     losses = [value for value in values if value < -neutral]
     neutral_values = [value for value in values if -neutral <= value <= neutral]
@@ -798,7 +799,6 @@ def _book_performance(accounts: list[dict[str, Any]], phase: str, neutral_band_u
         "current_bbook_profit": float(current_bbook_profit),
         "assumed_abook_profit": float(assumed_abook_profit),
         "theoretical_increment": float(assumed_abook_profit - current_bbook_profit),
-        "neutral_band_usd": neutral_band_usd,
     }
 
 
@@ -817,7 +817,6 @@ def build_two_stage_payload(
     min_payoff_ratio: float = 0.8,
     min_avg_daily_profit: float = 0.0,
     min_selection_monthly_consistency: float = 0.0,
-    neutral_band_usd: float = 10.0,
     min_positive_month_rate: float = 0.5,
     max_top1_day_profit_contribution: float = 0.2,
     max_peak_leverage_ratio: float = 200.0,
@@ -827,7 +826,6 @@ def build_two_stage_payload(
     min_stability_score: float = 70.0,
     high_confidence_trades: int = 100,
     high_confidence_days: int = 30,
-    exclude_test_accounts: bool = True,
     personal_candidate_logins: set[int] | None = None,
     personal_candidate_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -935,7 +933,7 @@ def build_two_stage_payload(
         else:
             selection_source = "rule_filter" if rule_deployable else "observation"
         validation_status = _status(
-            validation["client_net_pnl"], validation["trade_count"], neutral_band_usd
+            validation["client_net_pnl"], validation["trade_count"]
         )
         has_nonzero_pnl = any(
             _month(row["month_start"]) in all_months
@@ -1030,7 +1028,6 @@ def build_two_stage_payload(
     validation_groups = {
         cohort: _group_summary(
             cohort_accounts,
-            neutral_band_usd,
             "positive" if cohort == "abook_candidate" else "negative" if cohort == "bbook_candidate" else None,
         )
         for cohort, cohort_accounts in by_cohort.items()
@@ -1063,9 +1060,9 @@ def build_two_stage_payload(
     for account in active_validation:
         selection_value = account["selection"]["client_net_pnl"]
         validation_value = account["validation_status"]
-        if selection_value > neutral_band_usd:
+        if selection_value > float(NEUTRAL_BAND_USD):
             direction_agreements.append(validation_value == "profitable")
-        elif selection_value < -neutral_band_usd:
+        elif selection_value < -float(NEUTRAL_BAND_USD):
             direction_agreements.append(validation_value == "loss")
     validation_diagnostics = {
         "direction_agreement_rate": _safe_ratio(
@@ -1162,12 +1159,12 @@ def build_two_stage_payload(
     }
     book_performance = {
         "selection": {
-            "abook": _book_performance(by_cohort["abook_candidate"], "selection", neutral_band_usd),
-            "bbook": _book_performance(by_cohort["bbook_candidate"], "selection", neutral_band_usd),
+            "abook": _book_performance(by_cohort["abook_candidate"], "selection"),
+            "bbook": _book_performance(by_cohort["bbook_candidate"], "selection"),
         },
         "validation": {
-            "abook": _book_performance(by_cohort["abook_candidate"], "validation", neutral_band_usd),
-            "bbook": _book_performance(by_cohort["bbook_candidate"], "validation", neutral_band_usd),
+            "abook": _book_performance(by_cohort["abook_candidate"], "validation"),
+            "bbook": _book_performance(by_cohort["bbook_candidate"], "validation"),
         },
         "definition": "Abook theoretical increment = assumed Abook profit - current Bbook profit; assumed Abook profit is 0 until external execution data is available.",
     }
@@ -1228,7 +1225,6 @@ def build_two_stage_payload(
             "min_payoff_ratio": min_payoff_ratio,
             "min_avg_daily_profit": min_avg_daily_profit,
             "min_selection_monthly_consistency": min_selection_monthly_consistency,
-            "neutral_band_usd": neutral_band_usd,
             "min_positive_month_rate": min_positive_month_rate,
             "max_top1_day_profit_contribution": max_top1_day_profit_contribution,
             "max_peak_leverage_ratio": max_peak_leverage_ratio,

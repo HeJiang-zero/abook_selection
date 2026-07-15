@@ -96,7 +96,6 @@ def test_two_stage_analysis_separates_selection_and_validation_and_keeps_inactiv
         min_active_days=5,
         min_profit_factor=1,
         min_avg_daily_profit=10,
-        neutral_band_usd=10,
         min_positive_month_rate=0,
         max_top1_day_profit_contribution=1,
         min_direction_day_rate_lower_bound=0,
@@ -311,7 +310,7 @@ def test_two_stage_analysis_allows_short_holding_high_leverage_exception_only():
     assert accounts[36]["base_cohort"] == "observation"
 
 
-def test_two_stage_analysis_keeps_test_accounts_excluded_even_when_override_is_false():
+def test_two_stage_analysis_keeps_test_accounts_excluded():
     rows = [row(99, "05", group="real\\TEST", trades=20, wins=15, losses=5, market=120, net=110,
                 gross_wins=180, gross_losses=-60, active_days=10, daily_sum=110)]
     rows.append(row(99, "06", group="real\\TEST", trades=20, wins=15, losses=5, market=120, net=110,
@@ -325,7 +324,6 @@ def test_two_stage_analysis_keeps_test_accounts_excluded_even_when_override_is_f
         max_top1_day_profit_contribution=1,
         min_direction_day_rate_lower_bound=0,
         min_stability_score=0,
-        exclude_test_accounts=False,
     )
 
     assert result["selection"]["counts"]["eligible_accounts"] == 0

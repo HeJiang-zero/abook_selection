@@ -30,10 +30,8 @@
           <label>Profit Factor 阈值<input type="number" min="0" step="0.01" v-model.number="request.rules.min_profit_factor" /></label>
           <label>最低盈亏比<input type="number" min="0" step="0.05" v-model.number="request.rules.min_payoff_ratio" /></label>
           <label>平均日利润阈值<input type="number" step="1" v-model.number="request.rules.min_avg_daily_profit" /></label>
-          <label>中性区间 USD<input type="number" min="0" step="1" v-model.number="request.rules.neutral_band_usd" /></label>
         </div>
         <div class="rule-section"><strong>稳定性与风险管理参数（均可修改）</strong><div class="rule-grid"><label>盈利月份占比下限<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.min_positive_month_rate" /></label><label>最低月度持续性<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.min_selection_monthly_consistency" /></label><label>Top1 日利润贡献率上限<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.max_top1_day_profit_contribution" /></label><label>最大峰值杠杆率<input type="number" min="0.1" step="0.5" v-model.number="request.rules.max_peak_leverage_ratio" /></label><label>高杠杆短持仓例外（秒）<input type="number" min="0" step="1" v-model.number="request.rules.max_high_leverage_holding_seconds" /></label><label>日盈利率 95% 下限<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.min_direction_day_rate_lower_bound" /></label><label>最低稳定性评分<input type="number" min="0" max="100" step="1" v-model.number="request.rules.min_stability_score" /></label><label>高置信交易数<input type="number" min="0" step="1" v-model.number="request.rules.high_confidence_trades" /></label><label>高置信活跃天数<input type="number" min="0" step="1" v-model.number="request.rules.high_confidence_days" /></label></div><p class="coverage-note">Top1 日利润贡献率必须严格低于阈值；杠杆率使用本地风险快照的峰值日交易名义金额 / 上月余额。峰值杠杆超过上限时，仅中位持仓不超过例外秒数的用户可保留；上月余额为 0 的用户跳过杠杆过滤，但仍执行其他规则。</p></div>
-        <label class="check check-wide"><input type="checkbox" v-model="request.exclude_test_accounts" /> 排除账户组中含 test / demo 的测试账户</label>
         <label class="check check-wide"><input type="checkbox" v-model="request.personal_candidate_list" /> 个人候选名单（加入 Abook）</label>
 
         <label>服务器</label><div class="check-row"><label class="check"><input type="checkbox" value="mt5" v-model="request.platforms"> mt5</label><label class="check"><input type="checkbox" value="hh_mt5" v-model="request.platforms"> hh_mt5</label></div>
@@ -112,6 +110,6 @@
   </div>
   <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
-  <script src="/assets/app.js?v=20260715-6"></script>
+  <script src="/assets/app.js?v=20260715-7"></script>
 </body>
 </html>

@@ -36,7 +36,6 @@ class AnalysisRules(BaseModel):
     min_payoff_ratio: float = Field(default=0.8, ge=0)
     min_avg_daily_profit: float = Field(default=0.0, ge=0)
     min_selection_monthly_consistency: float = Field(default=0.0, ge=0, le=1)
-    neutral_band_usd: float = Field(default=10.0, ge=0)
     min_positive_month_rate: float = Field(default=0.5, ge=0, le=1)
     max_top1_day_profit_contribution: float = Field(default=0.2, gt=0, le=1)
     max_peak_leverage_ratio: float = Field(default=200.0, gt=0)
@@ -59,7 +58,6 @@ class AnalysisRequest(BaseModel):
     platforms: List[str] = Field(default_factory=lambda: ["mt5", "hh_mt5"])
     filters: AnalysisFilters = Field(default_factory=AnalysisFilters)
     rules: AnalysisRules = Field(default_factory=AnalysisRules)
-    exclude_test_accounts: bool = True
     personal_candidate_list: bool = False
 
     # Backward-compatible fields for old callers. New callers should use the

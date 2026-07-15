@@ -75,8 +75,10 @@ def test_frontend_shows_applied_rule_confirmation():
     assert "data.selection && data.profit_impact" in html
     assert "/assets/app.js?v=" in html
     assert "账户表现" in html
-    assert "test / demo" in html
     assert "个人候选名单（加入 Abook）" in html
     assert "request.personal_candidate_list" in html
     assert "personal_candidate_list" in javascript
-    assert "app.js?v=20260715-6" in html
+    assert "app.js?v=20260715-7" in html
+    assert "中性区间 USD" not in html
+    assert "request.exclude_test_accounts" not in javascript
+    assert "formatApiError" in javascript

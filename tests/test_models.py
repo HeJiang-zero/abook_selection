@@ -38,14 +38,20 @@ def test_analysis_request_accepts_separate_selection_and_validation_rules():
     request = AnalysisRequest(
         selection={"start": "2026-05-01", "end": "2026-06-30"},
         validation={"start": "2026-07-01", "end": "2026-07-31"},
-        rules={"min_trades": 30, "min_active_days": 8, "neutral_band_usd": 15},
-        exclude_test_accounts=False,
+        rules={"min_trades": 30, "min_active_days": 8},
     )
 
     assert request.rules.min_trades == 30
     assert request.rules.min_active_days == 8
-    assert request.rules.neutral_band_usd == 15
-    assert request.exclude_test_accounts is False
+
+
+@pytest.mark.parametrize("payload", [
+    {"rules": {"neutral_band_usd": 15}},
+    {"exclude_test_accounts": False},
+])
+def test_non_configurable_legacy_inputs_are_rejected(payload):
+    with pytest.raises(ValidationError):
+        AnalysisRequest(**payload)
 
 
 def test_old_position_management_rule_is_rejected():

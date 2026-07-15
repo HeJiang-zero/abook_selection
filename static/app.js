@@ -5,13 +5,12 @@ const DEFAULT_REQUEST = () => ({
   validation: { start: '2026-07-01', end: '2026-07-13' },
   rules: {
     min_trades: 20, min_active_days: 10, min_win_rate: 0.5, min_profit_factor: 1, min_payoff_ratio: 0.8, min_avg_daily_profit: 0,
-    min_selection_monthly_consistency: 0, neutral_band_usd: 10,
+    min_selection_monthly_consistency: 0,
     min_positive_month_rate: 0.5, max_top1_day_profit_contribution: 0.2, max_peak_leverage_ratio: 200,
     max_high_leverage_holding_seconds: 300,
     min_direction_day_rate_lower_bound: 0.55, min_stability_score: 70,
     high_confidence_trades: 100, high_confidence_days: 30,
   },
-  exclude_test_accounts: true,
   personal_candidate_list: false,
   platforms: ['mt5', 'hh_mt5'],
   filters: { groups: [], logins: [] },
@@ -69,7 +68,7 @@ createApp({
       const keys = [
         'min_trades', 'min_active_days', 'min_win_rate', 'min_profit_factor', 'min_payoff_ratio',
         'min_avg_daily_profit', 'min_selection_monthly_consistency',
-        'neutral_band_usd', 'min_positive_month_rate',
+        'min_positive_month_rate',
         'max_top1_day_profit_contribution', 'max_peak_leverage_ratio', 'max_high_leverage_holding_seconds', 'min_direction_day_rate_lower_bound',
         'min_stability_score', 'high_confidence_trades', 'high_confidence_days',
       ];
@@ -102,7 +101,7 @@ createApp({
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.request),
         });
         const body = await response.json();
-        if (!response.ok) throw new Error(body.detail || '查询失败');
+        if (!response.ok) throw new Error(this.formatApiError(body.detail));
         this.data = body;
       } catch (error) {
         this.error = error.message || '查询失败';
@@ -111,6 +110,17 @@ createApp({
         await nextTick();
         if (!this.error && this.data.selection) this.renderCharts();
       }
+    },
+    formatApiError(detail) {
+      if (Array.isArray(detail)) {
+        return detail.map(item => {
+          if (typeof item === 'string') return item;
+          const location = Array.isArray(item?.loc) ? item.loc.join('.') : '';
+          return [location, item?.msg].filter(Boolean).join(': ');
+        }).filter(Boolean).join('；') || '查询失败';
+      }
+      if (detail && typeof detail === 'object') return detail.msg || JSON.stringify(detail);
+      return detail || '查询失败';
     },
     renderCharts() {
       this.renderPnlChart();
@@ -190,7 +200,7 @@ createApp({
         const end = this.request.validation.end;
         const response = await fetch(`/api/abook/accounts/${account.platform}/${account.login}?start=${start}&end=${end}`);
         const body = await response.json();
-        if (!response.ok) throw new Error(body.detail || '详情加载失败');
+        if (!response.ok) throw new Error(this.formatApiError(body.detail) || '详情加载失败');
         this.detail = body;
       } catch (error) {
         this.error = error.message || '详情加载失败';
