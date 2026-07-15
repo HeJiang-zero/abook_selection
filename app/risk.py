@@ -28,7 +28,11 @@ class RiskSnapshot:
     records: tuple[dict[str, Any], ...]
     status: str
 
-    def allowed_logins(self, max_peak_leverage_ratio: float | None) -> set[tuple[str, int]]:
+    def allowed_logins(
+        self,
+        max_peak_leverage_ratio: float | None,
+        max_high_leverage_holding_seconds: float | None = None,
+    ) -> set[tuple[str, int]]:
         if self.status != "ready":
             return set()
         allowed: set[tuple[str, int]] = set()
@@ -37,11 +41,22 @@ class RiskSnapshot:
             peak = record.get("peak_leverage_ratio")
             if status != "positive" or max_peak_leverage_ratio is None:
                 allowed.add((str(record["platform"]), int(record["login"])))
-            elif peak is not None and float(peak) <= max_peak_leverage_ratio:
-                allowed.add((str(record["platform"]), int(record["login"])))
+            elif peak is not None:
+                short_hold_exception = (
+                    max_high_leverage_holding_seconds is not None
+                    and max_high_leverage_holding_seconds > 0
+                    and record.get("median_holding_seconds") is not None
+                    and float(record["median_holding_seconds"]) <= max_high_leverage_holding_seconds
+                )
+                if float(peak) <= max_peak_leverage_ratio or short_hold_exception:
+                    allowed.add((str(record["platform"]), int(record["login"])))
         return allowed
 
-    def excluded_logins(self, max_peak_leverage_ratio: float | None) -> set[tuple[str, int]]:
+    def excluded_logins(
+        self,
+        max_peak_leverage_ratio: float | None,
+        max_high_leverage_holding_seconds: float | None = None,
+    ) -> set[tuple[str, int]]:
         if self.status != "ready" or max_peak_leverage_ratio is None:
             return set()
         return {
@@ -50,6 +65,12 @@ class RiskSnapshot:
             if record.get("balance_status") == "positive"
             and record.get("peak_leverage_ratio") is not None
             and float(record["peak_leverage_ratio"]) > max_peak_leverage_ratio
+            and not (
+                max_high_leverage_holding_seconds is not None
+                and max_high_leverage_holding_seconds > 0
+                and record.get("median_holding_seconds") is not None
+                and float(record["median_holding_seconds"]) <= max_high_leverage_holding_seconds
+            )
         }
 
     def enrich_rows(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -66,6 +87,7 @@ class RiskSnapshot:
                     "risk_balance_prev_month": None,
                     "risk_average_open_degree": None,
                     "risk_peak_leverage_ratio": None,
+                    "risk_median_holding_seconds": None,
                     "risk_balance_status": "snapshot_record_missing" if self.status == "ready" else f"snapshot_{self.status}",
                 })
             else:
@@ -73,6 +95,7 @@ class RiskSnapshot:
                     "risk_balance_prev_month": record.get("balance_prev_month"),
                     "risk_average_open_degree": record.get("average_open_degree"),
                     "risk_peak_leverage_ratio": record.get("peak_leverage_ratio"),
+                    "risk_median_holding_seconds": record.get("median_holding_seconds"),
                     "risk_balance_status": record.get("balance_status"),
                 })
             enriched.append(item)
@@ -179,14 +202,20 @@ def build_local_risk_filter(request: "AnalysisRequest") -> LocalRiskFilter:
     excluded = None
     sql_filter_applied = False
     if snapshot.status == "ready":
-        candidate_allowed = snapshot.allowed_logins(request.rules.max_peak_leverage_ratio)
+        candidate_allowed = snapshot.allowed_logins(
+            request.rules.max_peak_leverage_ratio,
+            request.rules.max_high_leverage_holding_seconds,
+        )
         explicit_logins = request.filters.logins
         if explicit_logins:
             explicit_pairs = {(platform, int(login)) for platform in request.platforms for login in explicit_logins}
             allowed = candidate_allowed & explicit_pairs
             sql_filter_applied = True
         else:
-            candidate_excluded = snapshot.excluded_logins(request.rules.max_peak_leverage_ratio)
+            candidate_excluded = snapshot.excluded_logins(
+                request.rules.max_peak_leverage_ratio,
+                request.rules.max_high_leverage_holding_seconds,
+            )
             if len(candidate_excluded) <= MAX_SQL_EXCLUDED_LOGIN_FILTER_SIZE:
                 excluded = candidate_excluded
                 sql_filter_applied = True

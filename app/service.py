@@ -502,6 +502,7 @@ def _stability_assessment(
     min_selection_monthly_consistency: float,
     max_top1_day_profit_contribution: float,
     max_peak_leverage_ratio: float,
+    max_high_leverage_holding_seconds: float,
     min_direction_day_rate_lower_bound: float,
     min_stability_score: float,
     high_confidence_trades: int,
@@ -549,8 +550,11 @@ def _stability_assessment(
         flags.append("profit_concentration" if is_positive else "loss_concentration")
     if (
         selection.get("risk_balance_status") == "positive"
-        and (selection.get("risk_peak_leverage_ratio") is None
-             or selection["risk_peak_leverage_ratio"] > max_peak_leverage_ratio)
+        and not _leverage_filter_pass(
+            selection,
+            max_peak_leverage_ratio,
+            max_high_leverage_holding_seconds,
+        )
     ):
         flags.append("leverage_ratio")
     if confidence_tier == "low":
@@ -598,12 +602,24 @@ def _stability_assessment(
     }
 
 
-def _leverage_filter_pass(selection: dict[str, Any], max_peak_leverage_ratio: float) -> bool:
-    """Apply leverage only when a positive prior-month balance exists."""
+def _leverage_filter_pass(
+    selection: dict[str, Any],
+    max_peak_leverage_ratio: float,
+    max_high_leverage_holding_seconds: float | None = None,
+) -> bool:
+    """Apply leverage only with positive balance; allow short-hold exceptions."""
     if selection.get("risk_balance_status") != "positive":
         return True
     peak = selection.get("risk_peak_leverage_ratio")
-    return peak is not None and peak <= max_peak_leverage_ratio
+    if peak is None or peak <= max_peak_leverage_ratio:
+        return peak is not None
+    holding = selection.get("median_holding_seconds")
+    return (
+        max_high_leverage_holding_seconds is not None
+        and max_high_leverage_holding_seconds > 0
+        and holding is not None
+        and holding <= max_high_leverage_holding_seconds
+    )
 
 
 def _correlation(pairs: list[tuple[Decimal, Decimal]]) -> float:
@@ -791,16 +807,17 @@ def build_two_stage_payload(
     validation_start: str,
     validation_end: str,
     min_trades: int = 20,
-    min_active_days: int = 5,
+    min_active_days: int = 10,
     min_win_rate: float = 0.5,
     min_profit_factor: float = 1.0,
-    min_payoff_ratio: float = 1.0,
-    min_avg_daily_profit: float = 10.0,
-    min_selection_monthly_consistency: float = 0.5,
+    min_payoff_ratio: float = 0.8,
+    min_avg_daily_profit: float = 0.0,
+    min_selection_monthly_consistency: float = 0.0,
     neutral_band_usd: float = 10.0,
-    min_positive_month_rate: float = 1.0,
+    min_positive_month_rate: float = 0.5,
     max_top1_day_profit_contribution: float = 0.2,
-    max_peak_leverage_ratio: float = 5.0,
+    max_peak_leverage_ratio: float = 200.0,
+    max_high_leverage_holding_seconds: float = 300.0,
     risk_snapshot_status: str = "not_loaded",
     min_direction_day_rate_lower_bound: float = 0.55,
     min_stability_score: float = 70.0,
@@ -852,7 +869,9 @@ def build_two_stage_payload(
             and selection["payoff_ratio"] >= min_payoff_ratio \
             and selection_consistency_ok \
             and selection["top_positive_day_concentration"] < max_top1_day_profit_contribution \
-            and _leverage_filter_pass(selection, max_peak_leverage_ratio):
+            and _leverage_filter_pass(
+                selection, max_peak_leverage_ratio, max_high_leverage_holding_seconds
+            ):
             directional_cohort = "abook_candidate"
         elif qualifies_sample and selection["client_net_pnl"] < 0 and (
             selection["profit_factor"] is not None and selection["profit_factor"] < min_profit_factor
@@ -861,7 +880,9 @@ def build_two_stage_payload(
             and selection["payoff_ratio"] <= (1 / min_payoff_ratio if min_payoff_ratio else float("inf")) \
             and selection_consistency_ok \
             and selection["top_negative_day_concentration"] < max_top1_day_profit_contribution \
-            and _leverage_filter_pass(selection, max_peak_leverage_ratio):
+            and _leverage_filter_pass(
+                selection, max_peak_leverage_ratio, max_high_leverage_holding_seconds
+            ):
             directional_cohort = "bbook_candidate"
         else:
             directional_cohort = "observation"
@@ -876,6 +897,7 @@ def build_two_stage_payload(
             min_selection_monthly_consistency=min_selection_monthly_consistency,
             max_top1_day_profit_contribution=max_top1_day_profit_contribution,
             max_peak_leverage_ratio=max_peak_leverage_ratio,
+            max_high_leverage_holding_seconds=max_high_leverage_holding_seconds,
             min_direction_day_rate_lower_bound=min_direction_day_rate_lower_bound,
             min_stability_score=min_stability_score,
             high_confidence_trades=high_confidence_trades,
@@ -1173,6 +1195,7 @@ def build_two_stage_payload(
             "min_positive_month_rate": min_positive_month_rate,
             "max_top1_day_profit_contribution": max_top1_day_profit_contribution,
             "max_peak_leverage_ratio": max_peak_leverage_ratio,
+            "max_high_leverage_holding_seconds": max_high_leverage_holding_seconds,
             "risk_snapshot_status": risk_snapshot_status,
             "min_direction_day_rate_lower_bound": min_direction_day_rate_lower_bound,
             "min_stability_score": min_stability_score,

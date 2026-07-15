@@ -18,7 +18,7 @@ export CLICKHOUSE_SECURE=0
 
 打开 http://localhost:8000。生产环境请使用只读 ClickHouse 账号，并通过密钥管理注入 `CLICKHOUSE_PASSWORD`。
 
-默认筛选规则为：Abook 候选满足交易笔数 `>= 20`、活跃交易天数 `>= 5`、胜率 `>= 50%`、`Profit Factor > 1`、盈亏比 `>= 1`、平均交易日净利润 `> 10 USD`、5–6 月月度持续性 `>= 50%`、Top1 日利润贡献率 `< 20%`、峰值杠杆率 `<= 5`；Bbook 候选使用对应的亏损方向条件。平均交易日利润定义为：阶段内用户净交易 P&L（`profit + storage + commission + fee`，仅 `action IN (0,1)`）除以有交易的自然日数量。账户没有亏损交易时，PF 在筛选上视为无穷大，API 中以 `null` 表示，避免 JSON 非法数值。
+默认筛选规则为：Abook 候选满足交易笔数 `>= 20`、活跃交易天数 `>= 10`、胜率 `>= 50%`、`Profit Factor > 1`、盈亏比 `>= 0.8`、平均交易日净利润 `> 0 USD`、盈利月份占比 `>= 50%`、日盈利率 95% 下限 `>= 55%`、稳定性评分 `>= 70`、Top1 日利润贡献率 `< 20%`、峰值杠杆率 `<= 200`。峰值杠杆超过 200 时，仅筛选期中位持仓不超过 300 秒的用户保留为短持仓例外；Bbook 候选使用对应的亏损方向条件。平均交易日利润定义为：阶段内用户净交易 P&L（`profit + storage + commission + fee`，仅 `action IN (0,1)`）除以有交易的自然日数量。账户没有亏损交易时，PF 在筛选上视为无穷大，API 中以 `null` 表示，避免 JSON 非法数值。
 
 账户组中不区分大小写包含 `test` 或 `demo` 的账户是测试账号，所有查询、服务层聚合和账户详情都会硬性排除，即使请求传入 `exclude_test_accounts=false` 也不会放行。7 月验证阶段会保留没有交易的筛选账户，并标记为“无交易”。
 
@@ -37,13 +37,16 @@ export CLICKHOUSE_SECURE=0
   "validation": {"start": "2026-07-01", "end": "2026-07-13"},
   "rules": {
     "min_trades": 20,
-    "min_active_days": 5,
+    "min_active_days": 10,
+    "min_win_rate": 0.5,
     "min_profit_factor": 1,
-    "min_avg_daily_profit": 10,
+    "min_payoff_ratio": 0.8,
+    "min_avg_daily_profit": 0,
     "neutral_band_usd": 10,
-    "min_positive_month_rate": 1.0,
-  "max_top1_day_profit_contribution": 0.2,
-  "max_peak_leverage_ratio": 5,
+    "min_positive_month_rate": 0.5,
+    "max_top1_day_profit_contribution": 0.2,
+    "max_peak_leverage_ratio": 200,
+    "max_high_leverage_holding_seconds": 300,
     "min_direction_day_rate_lower_bound": 0.55,
     "min_stability_score": 70
   },
@@ -63,11 +66,13 @@ export CLICKHOUSE_SECURE=0
 .venv/bin/python scripts/build_user_risk_snapshot.py --selection-start 2026-05-01 --selection-end 2026-06-30
 ```
 
-快照默认写入 `data/user_risk_snapshot.json`，也可用 `ABOOK_RISK_SNAPSHOT_PATH` 覆盖路径。快照使用 matched trades 的 `turnover` 计算平均开仓程度和峰值杠杆率，并且 SQL 会排除 group 中大小写不敏感包含 `test` 或 `demo` 的账户，例如 `real\\FPlive\\TEST_USD_ZO_BA_NT_H`、`demo\\HHdemo\\forexhh-USD`。该本地文件不会提交到 GitHub。
+快照默认写入 `data/user_risk_snapshot.json`，也可用 `ABOOK_RISK_SNAPSHOT_PATH` 覆盖路径。快照使用 matched trades 的 `turnover` 计算平均开仓程度和峰值杠杆率，并记录筛选期中位持仓秒数。峰值杠杆率定义为：单日交易名义金额峰值 / `balance_prev_month`；`balance_prev_month <= 0` 的用户不计算杠杆率。SQL 会排除 group 中大小写不敏感包含 `test` 或 `demo` 的账户，例如 `real\\FPlive\\TEST_USD_ZO_BA_NT_H`、`demo\\HHdemo\\forexhh-USD`。该本地文件不会提交到 GitHub。
 
 全量风险名单会在用户 SQL 中按平台生成安全的 Login 排除条件，避免把数万 Login 放进 HTTP 参数导致 414；只有指定少量 Login 时才使用交集过滤。
 
 `balance_prev_month` 为空或小于等于 0 时不会把杠杆率伪造为 0：该用户标记为 `unknown_nonpositive_balance`，跳过杠杆上限，但继续执行胜率、PF、盈亏比、月度持续性和 Top1 日贡献率筛选。快照缺失或日期不匹配时，页面会显示风险快照状态，不会声称杠杆过滤已生效。
+
+高杠杆例外不是无条件放行：只有峰值杠杆超过上限且筛选期中位持仓不超过例外秒数时才放行；短持仓时间来自本地快照，因此仍可在页面请求中使用本地 Login 过滤。
 
 页面顶部的 Abook / Bbook 盈亏分析按 Core 候选组分别展示筛选期和验证期的账户数、盈利/亏损/中性账户、毛盈利、毛亏损、净 P&L、当前 Bbook 利润和假设 Abook 利润；理论增量只展示 7 月样本外验证期。Abook 理论增量定义为：`假设 Abook 利润 - 当前 Bbook 利润`；在当前没有外部 Abook 成交数据时，假设 Abook 利润为 0，因此它不是实际可实现利润。
 

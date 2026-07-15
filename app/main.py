@@ -86,6 +86,7 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             min_positive_month_rate=rules.min_positive_month_rate,
             max_top1_day_profit_contribution=rules.max_top1_day_profit_contribution,
             max_peak_leverage_ratio=rules.max_peak_leverage_ratio,
+            max_high_leverage_holding_seconds=rules.max_high_leverage_holding_seconds,
             risk_snapshot_status=risk_filter.status,
             min_direction_day_rate_lower_bound=rules.min_direction_day_rate_lower_bound,
             min_stability_score=rules.min_stability_score,

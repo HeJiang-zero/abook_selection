@@ -4,9 +4,10 @@ const DEFAULT_REQUEST = () => ({
   selection: { start: '2026-05-01', end: '2026-06-30' },
   validation: { start: '2026-07-01', end: '2026-07-13' },
   rules: {
-    min_trades: 20, min_active_days: 5, min_win_rate: 0.5, min_profit_factor: 1, min_payoff_ratio: 1, min_avg_daily_profit: 10,
+    min_trades: 20, min_active_days: 10, min_win_rate: 0.5, min_profit_factor: 1, min_payoff_ratio: 0.8, min_avg_daily_profit: 0,
     min_selection_monthly_consistency: 0.5, neutral_band_usd: 10,
-    min_positive_month_rate: 1.0, max_top1_day_profit_contribution: 0.2, max_peak_leverage_ratio: 5,
+    min_positive_month_rate: 0.5, max_top1_day_profit_contribution: 0.2, max_peak_leverage_ratio: 200,
+    max_high_leverage_holding_seconds: 300,
     min_direction_day_rate_lower_bound: 0.55, min_stability_score: 70,
     high_confidence_trades: 100, high_confidence_days: 30,
   },
@@ -68,7 +69,7 @@ createApp({
         'min_trades', 'min_active_days', 'min_win_rate', 'min_profit_factor', 'min_payoff_ratio',
         'min_avg_daily_profit', 'min_selection_monthly_consistency',
         'neutral_band_usd', 'min_positive_month_rate',
-        'max_top1_day_profit_contribution', 'max_peak_leverage_ratio', 'min_direction_day_rate_lower_bound',
+        'max_top1_day_profit_contribution', 'max_peak_leverage_ratio', 'max_high_leverage_holding_seconds', 'min_direction_day_rate_lower_bound',
         'min_stability_score', 'high_confidence_trades', 'high_confidence_days',
       ];
       return keys.some(key => Number(this.request.rules[key]) !== Number(this.data.rules[key]));
@@ -86,7 +87,7 @@ createApp({
     parseList(value) { return value.split(',').map(item => item.trim()).filter(Boolean); },
     parseLoginList(value) { return this.parseList(value).map(item => Number(item)).filter(item => Number.isInteger(item) && item > 0); },
     displayRule(key) { return this.rulesDirty ? this.request.rules[key] : this.data.rules?.[key]; },
-    riskModeLabel(value) { return ({ local_login_exclusion: '本地 Login 排除高杠杆账户', local_login_intersection: '本地 Login 交集过滤', service_post_filter: '服务层本地快照过滤' }[value]) || value || '未应用'; },
+    riskModeLabel(value) { return ({ local_login_exclusion: '本地 Login 排除高杠杆账户（含短持仓例外）', local_login_intersection: '本地 Login 交集过滤', service_post_filter: '服务层本地快照过滤' }[value]) || value || '未应用'; },
     resetFilters() { this.groupInput = ''; this.loginInput = ''; this.request = DEFAULT_REQUEST(); this.loadAnalysis(); },
     async loadAnalysis() {
       this.loading = true;

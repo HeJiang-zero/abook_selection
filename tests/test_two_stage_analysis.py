@@ -259,6 +259,7 @@ def test_two_stage_analysis_requires_strict_top1_contribution_and_skips_leverage
         min_avg_daily_profit=0, min_win_rate=0.5,
         min_selection_monthly_consistency=0.5,
         max_top1_day_profit_contribution=0.2, max_peak_leverage_ratio=5,
+        max_high_leverage_holding_seconds=0,
         min_positive_month_rate=0, min_direction_day_rate_lower_bound=0,
         min_stability_score=0,
     )
@@ -268,6 +269,43 @@ def test_two_stage_analysis_requires_strict_top1_contribution_and_skips_leverage
     assert accounts[32]["base_cohort"] == "observation"
     assert accounts[33]["base_cohort"] == "observation"
     assert accounts[34]["cohort"] == "abook_candidate"
+
+
+def test_two_stage_analysis_allows_short_holding_high_leverage_exception_only():
+    short_hold = [
+        row(35, "05", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100),
+        row(35, "06", trades=20, wins=14, losses=6, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100),
+    ]
+    long_hold = [
+        row(36, "05", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100),
+        row(36, "06", trades=20, wins=14, losses=6, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100),
+    ]
+    for item in short_hold:
+        item.update(risk_balance_prev_month=100, risk_balance_status="positive",
+                    risk_peak_leverage_ratio=250, selection_median_holding_seconds=60)
+    for item in long_hold:
+        item.update(risk_balance_prev_month=100, risk_balance_status="positive",
+                    risk_peak_leverage_ratio=250, selection_median_holding_seconds=600)
+
+    result = build_two_stage_payload(
+        short_hold + long_hold,
+        selection_start="2026-05-01", selection_end="2026-06-30",
+        validation_start="2026-07-01", validation_end="2026-07-13",
+        min_trades=20, min_active_days=5, min_profit_factor=1,
+        min_avg_daily_profit=0, min_win_rate=0.5, min_payoff_ratio=0.8,
+        min_selection_monthly_consistency=0, min_positive_month_rate=0,
+        max_top1_day_profit_contribution=1, max_peak_leverage_ratio=200,
+        max_high_leverage_holding_seconds=300,
+        min_direction_day_rate_lower_bound=0, min_stability_score=0,
+    )
+
+    accounts = {account["login"]: account for account in result["accounts"]}
+    assert accounts[35]["cohort"] == "abook_candidate"
+    assert accounts[36]["base_cohort"] == "observation"
 
 
 def test_two_stage_analysis_keeps_test_accounts_excluded_even_when_override_is_false():
@@ -471,6 +509,7 @@ def test_two_stage_analysis_only_deploys_stable_candidates_and_uses_active_preci
         rows,
         selection_start="2026-05-01", selection_end="2026-06-30",
         validation_start="2026-07-01", validation_end="2026-07-13",
+        min_selection_monthly_consistency=0.5,
     )
 
     assert result["selection"]["counts"]["abook_candidates"] == 1

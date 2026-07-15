@@ -32,6 +32,28 @@ def test_risk_snapshot_filters_positive_balance_but_keeps_nonpositive_balance(tm
     assert enriched["risk_peak_leverage_ratio"] is None
 
 
+def test_risk_snapshot_keeps_short_holding_high_leverage_accounts(tmp_path):
+    path = tmp_path / "risk.json"
+    path.write_text(json.dumps({
+        "selection_start": "2026-05-01",
+        "selection_end": "2026-06-30",
+        "platforms": ["mt5"],
+        "records": [
+            {"platform": "mt5", "login": 4, "balance_prev_month": 1000,
+             "peak_leverage_ratio": 250, "median_holding_seconds": 60,
+             "balance_status": "positive"},
+            {"platform": "mt5", "login": 5, "balance_prev_month": 1000,
+             "peak_leverage_ratio": 250, "median_holding_seconds": 600,
+             "balance_status": "positive"},
+        ],
+    }))
+
+    snapshot = load_risk_snapshot(path, "2026-05-01", "2026-06-30", ["mt5"])
+
+    assert snapshot.allowed_logins(200, 300) == {("mt5", 4)}
+    assert snapshot.excluded_logins(200, 300) == {("mt5", 5)}
+
+
 def test_risk_filter_detects_explicit_login_removed_by_leverage(tmp_path):
     path = tmp_path / "risk.json"
     path.write_text(json.dumps({
@@ -72,7 +94,10 @@ def test_large_ready_snapshot_remains_a_local_login_filter(tmp_path, monkeypatch
     }))
     monkeypatch.setenv("ABOOK_RISK_SNAPSHOT_PATH", str(path))
     from app.risk import build_local_risk_filter
-    risk_filter = build_local_risk_filter(AnalysisRequest(platforms=["mt5"]))
+    risk_filter = build_local_risk_filter(AnalysisRequest(
+        platforms=["mt5"],
+        rules={"max_peak_leverage_ratio": 5, "max_high_leverage_holding_seconds": 0},
+    ))
     assert risk_filter.allowed_logins is None
     assert len(risk_filter.excluded_logins) == 2500
     assert risk_filter.sql_login_filter_applied is True

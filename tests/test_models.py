@@ -20,16 +20,17 @@ def test_default_strategy_filters_are_profit_factor_and_average_daily_profit():
     request = AnalysisRequest()
 
     assert request.rules.min_profit_factor == 1.0
-    assert request.rules.min_avg_daily_profit == 10.0
+    assert request.rules.min_avg_daily_profit == 0.0
     assert request.selection.start.isoformat() == "2026-05-01"
     assert request.validation.end.isoformat() == "2026-07-13"
-    assert request.rules.min_positive_month_rate == 1.0
+    assert request.rules.min_positive_month_rate == 0.5
     assert request.rules.max_top1_day_profit_contribution == 0.2
-    assert request.rules.max_peak_leverage_ratio == 5.0
+    assert request.rules.max_peak_leverage_ratio == 200.0
+    assert request.rules.max_high_leverage_holding_seconds == 300.0
     assert request.rules.min_direction_day_rate_lower_bound == 0.55
     assert request.rules.min_stability_score == 70
     assert request.rules.min_win_rate == 0.5
-    assert request.rules.min_selection_monthly_consistency == 0.5
+    assert request.rules.min_selection_monthly_consistency == 0.0
 
 
 def test_analysis_request_accepts_separate_selection_and_validation_rules():

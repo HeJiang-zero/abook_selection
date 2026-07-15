@@ -57,6 +57,16 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
         WHERE mt.exit_time >= {selection_start:Date}
           AND mt.exit_time < {selection_end_exclusive:Date}
         GROUP BY mt.platform, mt.login, trade_date
+    ), holding AS (
+        SELECT
+            mt.platform,
+            mt.login,
+            quantileTDigest(0.5)(toFloat64(mt.holding_seconds)) AS median_holding_seconds
+        FROM risk.dwd_matched_trades AS mt FINAL
+        INNER JOIN users AS u ON mt.platform = u.platform AND mt.login = u.login
+        WHERE mt.exit_time >= {selection_start:Date}
+          AND mt.exit_time < {selection_end_exclusive:Date}
+        GROUP BY mt.platform, mt.login
     ), aggregates AS (
         SELECT
             platform,
@@ -68,14 +78,16 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
         GROUP BY platform, login
     )
     SELECT
-        u.platform,
-        u.login,
-        u.balance_prev_month,
+        u.platform AS platform,
+        u.login AS login,
+        u.balance_prev_month AS balance_prev_month,
         coalesce(a.total_turnover, 0) AS total_turnover,
         coalesce(a.active_days, 0) AS active_days,
-        coalesce(a.peak_daily_turnover, 0) AS peak_daily_turnover
+        coalesce(a.peak_daily_turnover, 0) AS peak_daily_turnover,
+        coalesce(h.median_holding_seconds, 0) AS median_holding_seconds
     FROM users AS u
     LEFT JOIN aggregates AS a ON u.platform = a.platform AND u.login = a.login
+    LEFT JOIN holding AS h ON u.platform = h.platform AND u.login = h.login
     ORDER BY u.platform, u.login
     """
     result = client.query(query, parameters={
@@ -90,6 +102,7 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
         total_turnover = Decimal(str(row.get("total_turnover") or 0))
         active_days = int(row.get("active_days") or 0)
         peak_daily_turnover = Decimal(str(row.get("peak_daily_turnover") or 0))
+        median_holding_seconds = Decimal(str(row.get("median_holding_seconds") or 0))
         if balance > 0:
             average_open_degree = float(total_turnover / Decimal(active_days) / balance) if active_days else 0.0
             peak_leverage_ratio = float(peak_daily_turnover / balance)
@@ -105,6 +118,7 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
             "balance_prev_month": float(balance),
             "average_open_degree": average_open_degree,
             "peak_leverage_ratio": peak_leverage_ratio,
+            "median_holding_seconds": float(median_holding_seconds),
             "balance_status": balance_status,
         })
     return {
