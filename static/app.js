@@ -30,13 +30,13 @@ createApp({
       sortKey: 'selection_client_net_pnl',
       page: 1,
       pageSize: 50,
-      chart: null,
-      validationChart: null,
+      abookPnlChart: null,
+      bbookPnlChart: null,
       stabilityChart: null,
       selectedAccount: null,
       detail: { symbols: [], trades: [] },
       request: DEFAULT_REQUEST(),
-      data: { coverage: null, selection: null, validation: { groups: {} }, transitions: {}, profit_impact: {}, personal_candidate_list: { enabled: false }, accounts: [], monthly_series: [] },
+      data: { coverage: null, selection: null, validation: { groups: {} }, transitions: {}, profit_impact: {}, personal_candidate_list: { enabled: false }, accounts: [], monthly_series: [], daily_book_series: [] },
     };
   },
   computed: {
@@ -50,8 +50,9 @@ createApp({
       const query = this.accountSearch.trim().toLowerCase();
       const rows = this.visibleAccounts.filter(account => {
         const text = `${account.platform} ${account.login} ${account.account_group || ''}`.toLowerCase();
+        const displayCohort = account.cohort === 'abook_candidate' ? 'abook_candidate' : 'bbook_candidate';
         return (!query || text.includes(query))
-          && (!this.cohortFilter || account.cohort === this.cohortFilter)
+          && (!this.cohortFilter || displayCohort === this.cohortFilter)
           && (!this.confidenceFilter || account.confidence_tier === this.confidenceFilter);
       });
       const numeric = (account) => Number(account[this.sortKey] ?? account.stability?.score ?? 0);
@@ -79,8 +80,8 @@ createApp({
   mounted() {
     this.loadAnalysis();
     window.addEventListener('resize', () => {
-      if (this.chart) this.chart.resize();
-      if (this.validationChart) this.validationChart.resize();
+      if (this.abookPnlChart) this.abookPnlChart.resize();
+      if (this.bbookPnlChart) this.bbookPnlChart.resize();
       if (this.stabilityChart) this.stabilityChart.resize();
     });
   },
@@ -123,11 +124,56 @@ createApp({
       return detail || '查询失败';
     },
     renderCharts() {
-      this.renderPnlChart();
-      this.renderValidationChart();
+      this.renderDailyPnlCharts();
       this.renderStabilityChart();
     },
-    renderPnlChart() {
+    renderDailyPnlCharts() {
+      this.renderDailyPnlChart('abook', 'abook-daily-pnl-chart');
+      this.renderDailyPnlChart('bbook', 'bbook-daily-pnl-chart');
+    },
+    renderDailyPnlChart(book, nodeId) {
+      const node = document.getElementById(nodeId);
+      if (!node || !window.echarts) return;
+      const chartKey = book === 'abook' ? 'abookPnlChart' : 'bbookPnlChart';
+      if (!this[chartKey]) this[chartKey] = echarts.init(node);
+      const records = this.data.daily_book_series || [];
+      const dates = records.map(item => item.date);
+      const bookLabel = book === 'abook' ? 'Abook' : 'Bbook';
+      const values = key => records.map(item => key === 'company_net_pnl'
+        ? item.company_net_pnl || 0
+        : (item[book] || {})[key] || 0);
+      const phaseAreas = [];
+      let phaseStart = 0;
+      for (let index = 1; index <= records.length; index += 1) {
+        if (index === records.length || records[index].phase !== records[phaseStart].phase) {
+          phaseAreas.push([{ xAxis: dates[phaseStart] }, { xAxis: dates[index - 1] }]);
+          phaseStart = index;
+        }
+      }
+      this[chartKey].setOption({
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'cross' },
+          formatter: params => {
+            const record = records.find(item => item.date === params[0]?.axisValue);
+            const header = record ? record.date + ' · ' + (record.phase === 'selection' ? '筛选期' : '验证期') : '';
+            return [header].concat(params.map(item => item.marker + item.seriesName + ': ' + this.money(item.value))).join('<br/>');
+          },
+        },
+        legend: { data: ['公司净 P&L', bookLabel + ' 净 P&L', bookLabel + ' 盈利 P&L', bookLabel + ' 亏损 P&L'], textStyle: { color: '#94a3b8' } },
+        grid: { left: 18, right: 20, top: 46, bottom: 32, containLabel: true },
+        xAxis: { type: 'category', data: dates, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', formatter: value => value.slice(5) } },
+        yAxis: { type: 'value', axisLabel: { color: '#94a3b8', formatter: value => this.money(value) }, splitLine: { lineStyle: { color: '#1e293b' } } },
+        markArea: { silent: true, itemStyle: { color: book === 'abook' ? 'rgba(56, 189, 248, .04)' : 'rgba(167, 139, 250, .04)' }, data: phaseAreas },
+        series: [
+          { name: '公司净 P&L', type: 'line', smooth: true, symbol: 'circle', symbolSize: 5, data: values('company_net_pnl'), lineStyle: { width: 3, color: '#f8fafc' }, itemStyle: { color: '#f8fafc' } },
+          { name: bookLabel + ' 净 P&L', type: 'line', smooth: true, symbol: 'circle', symbolSize: 5, data: values('net_pnl'), lineStyle: { width: 3, color: book === 'abook' ? '#38bdf8' : '#a78bfa' }, itemStyle: { color: book === 'abook' ? '#38bdf8' : '#a78bfa' } },
+          { name: bookLabel + ' 盈利 P&L', type: 'line', smooth: true, symbol: 'circle', symbolSize: 4, data: values('profitable_pnl'), lineStyle: { width: 2, color: '#86efac' }, itemStyle: { color: '#86efac' } },
+          { name: bookLabel + ' 亏损 P&L', type: 'line', smooth: true, symbol: 'circle', symbolSize: 4, data: values('loss_pnl'), lineStyle: { width: 2, color: '#fda4af' }, itemStyle: { color: '#fda4af' } },
+        ],
+      }, true);
+    },
+    renderLegacyMonthlyPnlChart() {
       const node = document.getElementById('pnl-chart');
       if (!node || !window.echarts) return;
       if (!this.chart) this.chart = echarts.init(node);
@@ -152,13 +198,13 @@ createApp({
         ],
       }, true);
     },
-    renderValidationChart() {
-      const node = document.getElementById('validation-chart');
+    renderLegacyValidationChart() {
+      const node = document.getElementById('legacy_validation_chart');
       if (!node || !window.echarts) return;
-      if (!this.validationChart) this.validationChart = echarts.init(node);
+      if (!this.legacyValidationChart) this.legacyValidationChart = echarts.init(node);
       const cohorts = ['abook_candidate', 'bbook_candidate', 'observation'];
       const groups = this.data.validation.groups || {};
-      this.validationChart.setOption({
+      this.legacyValidationChart.setOption({
         tooltip: {
           trigger: 'axis',
           axisPointer: { type: 'cross' },
@@ -209,7 +255,7 @@ createApp({
       }
     },
     cohortLabel(value) {
-      return ({ abook_candidate: 'Abook Core', bbook_candidate: 'Bbook Core', observation: '观察组' }[value]) || value || '—';
+      return ({ abook_candidate: 'Abook Core', bbook_candidate: 'Bbook', observation: 'Bbook' }[value]) || value || '—';
     },
     statusLabel(value) {
       return ({ profitable: '盈利', loss: '亏损', neutral: '中性', inactive: '无交易', continued_profitable: '继续盈利', started_loss: '开始亏损', continued_loss: '继续亏损', turned_profit: '转为盈利' }[value]) || value || '—';
