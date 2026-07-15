@@ -6,7 +6,7 @@ import clickhouse_connect
 
 from .config import Settings, get_settings
 from .models import AnalysisRequest
-from .queries import build_account_detail_query, build_analysis_query
+from .queries import build_account_detail_query, build_analysis_query, build_daily_pnl_query
 
 
 class RepositoryConfigurationError(RuntimeError):
@@ -61,6 +61,22 @@ class ClickHouseRepository:
             selection_end=request.selection.end.isoformat(),
             validation_start=request.validation.start.isoformat(),
             validation_end=request.validation.end.isoformat(),
+        )
+        return self._rows(query, params)
+
+    def fetch_daily_pnl(
+        self,
+        request: AnalysisRequest,
+        excluded_logins: set[tuple[str, int]] | None = None,
+    ) -> list[dict[str, Any]]:
+        start = min(request.selection.start, request.validation.start)
+        end = max(request.selection.end, request.validation.end)
+        query, params = build_daily_pnl_query(
+            platforms=request.platforms,
+            start=start.isoformat(),
+            end=end.isoformat(),
+            filters=request.filters.model_dump(),
+            excluded_logins=excluded_logins,
         )
         return self._rows(query, params)
 

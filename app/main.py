@@ -34,6 +34,17 @@ def get_repository() -> ClickHouseRepository:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+def _fetch_daily_rows(
+    repository: ClickHouseRepository,
+    request: AnalysisRequest,
+    excluded_logins: set[tuple[str, int]] | None = None,
+) -> list[dict]:
+    method = getattr(repository, "fetch_daily_pnl", None)
+    if not callable(method):
+        return []
+    return method(request, excluded_logins=excluded_logins)
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "abook-dashboard"}
@@ -58,10 +69,12 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
         risk_filter = build_local_risk_filter(request)
         effective_request = risk_filter.apply(request)
         overview_rows = None
+        overview_daily_rows = None
         if personal_candidates_enabled or risk_filter.allowed_logins is not None or risk_filter.excluded_logins:
             # Company-profit overview must remain population-level. Do not let
             # the Abook leverage rule remove users from the monthly baseline.
             overview_rows = repository.fetch_analysis(request)
+            overview_daily_rows = _fetch_daily_rows(repository, request)
         if personal_candidates_enabled:
             # Personal candidates are an explicit Abook override. Keep the
             # normal platform/group/login/test-demo query boundaries, but do
@@ -82,10 +95,23 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             )
             payload["risk_management"] = risk_filter.summary()
             return payload
+        if personal_candidates_enabled:
+            daily_rows = overview_daily_rows or []
+        elif risk_filter.is_empty_for(request):
+            daily_rows = []
+        else:
+            excluded_logins = risk_filter.excluded_logins
+            daily_rows = (
+                _fetch_daily_rows(repository, effective_request, excluded_logins=excluded_logins)
+                if excluded_logins
+                else _fetch_daily_rows(repository, effective_request)
+            )
         rules = request.rules
         payload = build_two_stage_payload(
             rows,
             overview_rows=overview_rows,
+            daily_rows=daily_rows,
+            overview_daily_rows=overview_daily_rows,
             selection_start=request.selection.start.isoformat(),
             selection_end=request.selection.end.isoformat(),
             validation_start=request.validation.start.isoformat(),

@@ -74,6 +74,15 @@ def test_analysis_returns_two_stage_payload_for_new_request():
                 })
             return rows
 
+        def fetch_daily_pnl(self, request, excluded_logins=None):
+            return [{
+                "platform": "mt5", "login": 7,
+                "trade_date": datetime(2026, 5, 15),
+                "client_net_pnl": Decimal("12"),
+                "market_pnl": Decimal("13"),
+                "matched_trades": 2,
+            }]
+
     app.dependency_overrides[get_repository] = lambda: FakeRepository()
     try:
         response = client.post(
@@ -89,3 +98,4 @@ def test_analysis_returns_two_stage_payload_for_new_request():
     assert body["coverage"]["validation_partial"] is True
     assert body["rules"]["min_stability_score"] == 72
     assert body["rules"]["max_top1_day_profit_contribution"] == 0.4
+    assert "daily_book_series" in body
