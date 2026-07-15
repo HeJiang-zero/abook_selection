@@ -370,4 +370,3 @@ Expected: the first command finds the new daily chart contract; the second comma
 git add README.md
 git commit -m "docs: describe daily book pnl charts"
 ~~~
-
