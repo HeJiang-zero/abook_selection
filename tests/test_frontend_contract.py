@@ -22,6 +22,13 @@ def test_frontend_exposes_two_stage_controls_and_validation_sections():
     assert "Top1 日利润贡献率" in html
     assert "最大峰值杠杆率" in html
     assert "高杠杆短持仓例外" in html
+    for rule in [
+        "min_active_days", "min_win_rate", "min_profit_factor", "min_payoff_ratio",
+        "min_positive_month_rate", "min_direction_day_rate_lower_bound",
+        "min_stability_score", "max_top1_day_profit_contribution",
+        "max_peak_leverage_ratio", "max_high_leverage_holding_seconds",
+    ]:
+        assert f'v-model.number="request.rules.{rule}"' in html
     assert "max_top_day_concentration" not in html
 
 

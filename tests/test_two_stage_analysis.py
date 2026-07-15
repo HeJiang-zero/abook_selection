@@ -395,6 +395,37 @@ def test_two_stage_analysis_exposes_monthly_company_profit_and_july_book_split()
     assert result["profit_overview"]["july_book_split"]["book"]["company_profit"] == 60.0
 
 
+def test_profit_overview_uses_stable_unfiltered_population_rows():
+    selected_rows = [
+        row(201, "05", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100),
+        row(201, "06", trades=20, wins=14, losses=6, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100),
+    ]
+    overview_rows = selected_rows + [
+        row(202, "05", trades=20, wins=5, losses=15, market=-60, net=-50,
+            gross_wins=50, gross_losses=-100, active_days=10, daily_sum=-50),
+        row(202, "06", trades=20, wins=6, losses=14, market=-60, net=-50,
+            gross_wins=60, gross_losses=-100, active_days=10, daily_sum=-50),
+    ]
+
+    result = build_two_stage_payload(
+        selected_rows,
+        overview_rows=overview_rows,
+        selection_start="2026-05-01", selection_end="2026-06-30",
+        validation_start="2026-07-01", validation_end="2026-07-13",
+        min_trades=20, min_active_days=5, min_profit_factor=1,
+        min_avg_daily_profit=0, min_positive_month_rate=0,
+        max_top1_day_profit_contribution=1,
+        min_direction_day_rate_lower_bound=0, min_stability_score=0,
+    )
+
+    monthly = {item["month"]: item for item in result["profit_overview"]["monthly"]}
+    assert monthly["2026-05"]["user_net_pnl"] == 50.0
+    assert monthly["2026-06"]["user_net_pnl"] == 50.0
+    assert monthly["2026-05"]["active_accounts"] == 2
+
+
 def test_two_stage_analysis_uses_source_unique_account_count_and_hides_zero_pnl_accounts():
     zero = row(9, "05")
     zero["population_unique_accounts"] = 1

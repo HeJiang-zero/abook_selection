@@ -53,6 +53,11 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
     try:
         risk_filter = build_local_risk_filter(request)
         effective_request = risk_filter.apply(request)
+        overview_rows = None
+        if risk_filter.allowed_logins is not None or risk_filter.excluded_logins:
+            # Company-profit overview must remain population-level. Do not let
+            # the Abook leverage rule remove users from the monthly baseline.
+            overview_rows = repository.fetch_analysis(request)
         if risk_filter.is_empty_for(request):
             rows = []
         else:
@@ -71,6 +76,7 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
         rules = request.rules
         payload = build_two_stage_payload(
             rows,
+            overview_rows=overview_rows,
             selection_start=request.selection.start.isoformat(),
             selection_end=request.selection.end.isoformat(),
             validation_start=request.validation.start.isoformat(),

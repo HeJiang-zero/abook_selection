@@ -802,6 +802,7 @@ def _book_performance(accounts: list[dict[str, Any]], phase: str, neutral_band_u
 def build_two_stage_payload(
     rows: Iterable[dict[str, Any]],
     *,
+    overview_rows: Iterable[dict[str, Any]] | None = None,
     selection_start: str,
     selection_end: str,
     validation_start: str,
@@ -831,6 +832,12 @@ def build_two_stage_payload(
     # predicates, and the service repeats them for injected/test rows.
     materialized = [
         row for row in materialized
+        if "test" not in str(row.get("account_group", "")).lower()
+        and "demo" not in str(row.get("account_group", "")).lower()
+    ]
+    overview_materialized = list(overview_rows) if overview_rows is not None else list(materialized)
+    overview_materialized = [
+        row for row in overview_materialized
         if "test" not in str(row.get("account_group", "")).lower()
         and "demo" not in str(row.get("account_group", "")).lower()
     ]
@@ -1089,27 +1096,26 @@ def build_two_stage_payload(
 
     monthly_overview = []
     for month in all_months:
-        month_rows = []
-        active_logins = set()
-        for account in accounts:
-            source_rows = grouped[(account["platform"], account["login"])]
-            matching = [row for row in source_rows if _month(row["month_start"]) == month]
-            month_rows.extend(matching or [_empty_period_row(account, month)])
-            if any(int(row.get("matched_trades", 0) or 0) > 0 for row in matching):
-                active_logins.add((account["platform"], account["login"]))
-        month_metrics = _account_period_metrics(
-            month_rows,
-            accounts[0] if accounts else {"platform": "", "login": 0, "account_group": ""},
-        )
+        month_rows = [
+            row for row in overview_materialized
+            if _month(row["month_start"]) == month
+        ]
+        active_logins = {
+            (row["platform"], int(row["login"]))
+            for row in month_rows
+            if int(row.get("matched_trades", 0) or 0) > 0
+        }
+        client_net_pnl = _sum(month_rows, "client_net_pnl")
+        market_pnl = sum((_canonical_market_pnl(row) for row in month_rows), ZERO)
         monthly_overview.append({
             "month": month,
             "phase": "selection" if month in selection_months else "validation",
             "active_accounts": len(active_logins),
-            "user_net_pnl": month_metrics["client_net_pnl"],
-            "user_market_pnl": month_metrics["market_pnl"],
-            "company_bbook_profit": -month_metrics["client_net_pnl"],
-            "company_market_profit": -month_metrics["market_pnl"],
-            "matched_trades": month_metrics["trade_count"],
+            "user_net_pnl": _float(client_net_pnl),
+            "user_market_pnl": _float(market_pnl),
+            "company_bbook_profit": _float(-client_net_pnl),
+            "company_market_profit": _float(-market_pnl),
+            "matched_trades": sum(int(row.get("matched_trades", 0) or 0) for row in month_rows),
         })
 
     profit_overview = {
