@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Abook 筛选与 7 月验证｜三个月账户回溯</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260715-2" />
+</head>
+<body>
+  <div id="app" v-cloak>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">RISK / A-BOOK ANALYTICS</p>
+        <h1>Abook 用户筛选与 7 月验证</h1>
+        <p class="muted">5–6 月筛选 · 7 月独立验证 · UTC 计算 · 理论反向利润</p>
+      </div>
+      <div class="status-pill" :class="loading ? 'busy' : 'ready'"><span class="status-dot"></span>{{ loading ? '查询中' : '就绪' }}</div>
+    </header>
+
+    <main class="layout">
+      <aside class="filter-panel">
+        <div class="panel-heading"><div><span class="section-kicker">FILTERS</span><h2>分析窗口</h2></div><button class="ghost-button" @click="resetFilters">重置</button></div>
+        <div class="period-block"><strong>筛选期</strong><div class="two-col"><label>筛选开始日期<input type="date" v-model="request.selection.start" /></label><label>筛选结束日期<input type="date" v-model="request.selection.end" /></label></div></div>
+        <div class="period-block"><strong>验证期</strong><div class="two-col"><label>验证开始日期<input type="date" v-model="request.validation.start" /></label><label>验证结束日期<input type="date" v-model="request.validation.end" /></label></div></div>
+
+        <div class="rule-grid">
+          <label>最低交易笔数<input type="number" min="0" step="1" v-model.number="request.rules.min_trades" /></label>
+          <label>最低活跃天数<input type="number" min="0" step="1" v-model.number="request.rules.min_active_days" /></label>
+          <label>最低胜率<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.min_win_rate" /></label>
+          <label>Profit Factor 阈值<input type="number" min="0" step="0.01" v-model.number="request.rules.min_profit_factor" /></label>
+          <label>最低盈亏比<input type="number" min="0" step="0.05" v-model.number="request.rules.min_payoff_ratio" /></label>
+          <label>平均日利润阈值<input type="number" step="1" v-model.number="request.rules.min_avg_daily_profit" /></label>
+          <label>中性区间 USD<input type="number" min="0" step="1" v-model.number="request.rules.neutral_band_usd" /></label>
+        </div>
+        <details class="advanced-rules"><summary>稳定性与反过拟合参数</summary><div class="rule-grid"><label>最低盈利月份占比<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.min_positive_month_rate" /></label><label>最低月度持续性<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.min_selection_monthly_consistency" /></label><label>单日利润/仓位集中度上限<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.max_top_day_concentration" /></label><label>日盈利率下限<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.min_direction_day_rate_lower_bound" /></label><label>最低稳定性评分<input type="number" min="0" max="100" step="1" v-model.number="request.rules.min_stability_score" /></label></div><p class="coverage-note">月度持续性 = 5–6 月较弱方向月份 / 较强方向月份；单日利润/仓位集中度是风险代理，不是保证金风险率。</p></details>
+        <label class="check check-wide"><input type="checkbox" v-model="request.exclude_test_accounts" /> 排除账户组中含 test / demo 的测试账户</label>
+
+        <label>服务器</label><div class="check-row"><label class="check"><input type="checkbox" value="mt5" v-model="request.platforms"> mt5</label><label class="check"><input type="checkbox" value="hh_mt5" v-model="request.platforms"> hh_mt5</label></div>
+        <label>账户组（逗号分隔）<input v-model="groupInput" placeholder="real\\FPlive" /></label>
+        <label>指定 Login（逗号分隔）<input v-model="loginInput" placeholder="935001048, 160006427" /></label>
+        <button class="primary-button" @click="loadAnalysis" :disabled="loading || request.platforms.length === 0">{{ loading ? '正在计算…' : '应用筛选与验证' }}</button>
+        <p v-if="data.rules" class="applied-rules"><strong>{{ rulesDirty ? '待应用参数' : '已应用规则' }}</strong>：交易数 ≥ {{ number(displayRule('min_trades')) }} · 活跃天数 ≥ {{ number(displayRule('min_active_days')) }} · 胜率 ≥ {{ percent(displayRule('min_win_rate')) }} · PF ≥ {{ number(displayRule('min_profit_factor')) }} · 盈亏比 ≥ {{ number(displayRule('min_payoff_ratio')) }} · 平均日利润 ≥ {{ money(displayRule('min_avg_daily_profit')) }} · 月度持续性 ≥ {{ percent(displayRule('min_selection_monthly_consistency')) }} · 单日利润/仓位集中度 ≤ {{ percent(displayRule('max_top_day_concentration')) }} · 稳定性评分 ≥ {{ number(displayRule('min_stability_score')) }} · 日盈利率下限 ≥ {{ percent(displayRule('min_direction_day_rate_lower_bound')) }}<span v-if="rulesDirty" class="warning">｜参数已修改，点击“应用筛选与验证”后才会重新计算</span><span v-else class="positive">｜本次结果已按这些参数计算</span></p>
+        <p class="coverage-note">筛选规则只使用 5–6 月，7 月只用于验证，不参与候选分组。</p>
+      </aside>
+
+      <section class="content">
+        <div v-if="error" class="alert error">{{ error }}</div>
+        <div v-if="!error && !loading && data.selection" class="kpi-grid">
+          <article class="kpi-card accent"><span>有效账户</span><strong>{{ number(data.selection.counts.eligible_accounts) }}</strong><small>测试账户已排除</small></article>
+          <article class="kpi-card"><span>Abook 可部署 Core</span><strong>{{ number(data.selection.counts.abook_candidates) }}</strong><small>5–6 月稳定盈利，达部署门槛</small></article>
+          <article class="kpi-card"><span>Bbook 可部署 Core</span><strong>{{ number(data.selection.counts.bbook_candidates) }}</strong><small>5–6 月稳定亏损，达部署门槛</small></article>
+          <article class="kpi-card"><span>Abook 7 月继续盈利率</span><strong class="positive">{{ percent(data.validation.groups.abook_candidate.active_positive_account_rate) }}</strong><small>仅统计 7 月有交易账户，目标 ≥ 60%</small></article>
+          <article class="kpi-card"><span>Abook 7 月开始亏损率</span><strong class="negative">{{ percent(data.validation.groups.abook_candidate.active_negative_account_rate) }}</strong><small>仅统计 7 月有交易账户</small></article>
+          <article class="kpi-card"><span>Abook 7月验证理论增量</span><strong :class="tone(data.profit_impact.abook_candidate.validation_incremental_change)">{{ money(data.profit_impact.abook_candidate.validation_incremental_change) }}</strong><small>仅看样本外验证期，假设 Abook 后为 0</small></article>
+        </div>
+
+        <div v-if="!error && !loading && data.book_performance" class="panel-card book-analysis-panel">
+          <div class="panel-heading"><div><span class="section-kicker">BOOK PERFORMANCE</span><h2>Abook / Bbook 盈亏分析</h2></div><span class="muted">按当前 Core 候选组，净 P&amp;L 统一采用 Deals 口径</span></div>
+          <div class="book-analysis-grid">
+            <article v-for="book in ['abook', 'bbook']" :key="book" class="book-analysis-card" :class="book">
+              <div class="book-analysis-title"><h3>{{ book === 'abook' ? 'Abook Core' : 'Bbook Core' }}</h3><span>{{ book === 'abook' ? '筛选出的稳定盈利账户' : '筛选出的稳定亏损账户' }}</span></div>
+              <table class="small-table"><thead><tr><th>指标</th><th>筛选期</th><th>验证期</th></tr></thead><tbody>
+                <tr><td>账户数</td><td>{{ number(data.book_performance.selection[book].accounts) }}</td><td>{{ number(data.book_performance.validation[book].accounts) }}</td></tr>
+                <tr><td>盈利 / 亏损 / 中性</td><td>{{ number(data.book_performance.selection[book].profitable_accounts) }} / {{ number(data.book_performance.selection[book].loss_accounts) }} / {{ number(data.book_performance.selection[book].neutral_accounts) }}</td><td>{{ number(data.book_performance.validation[book].profitable_accounts) }} / {{ number(data.book_performance.validation[book].loss_accounts) }} / {{ number(data.book_performance.validation[book].neutral_accounts) }}</td></tr>
+                <tr><td>毛盈利 / 毛亏损</td><td><span class="positive">{{ money(data.book_performance.selection[book].gross_profit) }}</span> / <span class="negative">{{ money(data.book_performance.selection[book].gross_loss) }}</span></td><td><span class="positive">{{ money(data.book_performance.validation[book].gross_profit) }}</span> / <span class="negative">{{ money(data.book_performance.validation[book].gross_loss) }}</span></td></tr>
+                <tr><td>用户净 P&amp;L</td><td :class="tone(data.book_performance.selection[book].net_pnl)">{{ money(data.book_performance.selection[book].net_pnl) }}</td><td :class="tone(data.book_performance.validation[book].net_pnl)">{{ money(data.book_performance.validation[book].net_pnl) }}</td></tr>
+                <tr><td>当前 Bbook 利润</td><td :class="tone(data.book_performance.selection[book].current_bbook_profit)">{{ money(data.book_performance.selection[book].current_bbook_profit) }}</td><td :class="tone(data.book_performance.validation[book].current_bbook_profit)">{{ money(data.book_performance.validation[book].current_bbook_profit) }}</td></tr>
+                <tr><td>Abook 假设利润</td><td>{{ money(data.book_performance.selection[book].assumed_abook_profit) }}</td><td>{{ money(data.book_performance.validation[book].assumed_abook_profit) }}</td></tr>
+                <tr><td><strong>7月验证理论增量</strong></td><td colspan="2" :class="tone(data.book_performance.validation[book].theoretical_increment)"><strong>{{ money(data.book_performance.validation[book].theoretical_increment) }}</strong></td></tr>
+              </tbody></table>
+            </article>
+          </div>
+          <p class="footnote">{{ data.book_performance.definition }}</p>
+        </div>
+
+        <div v-if="!error && !loading && data.profit_overview" class="profit-overview panel-card">
+          <div class="panel-heading"><div><span class="section-kicker">HOUSE PROFIT</span><h2>阶段公司利润概览</h2></div><span class="muted">公司利润按用户净交易 P&amp;L 的相反数估算</span></div>
+          <div class="profit-overview-grid">
+            <div><span class="subheading">5–6 月整体 Book 利润</span><div class="profit-months"><article v-for="item in selectionMonthlyProfit" :key="item.month" class="profit-tile"><span>{{ item.month }}</span><strong :class="tone(item.company_bbook_profit)">{{ money(item.company_bbook_profit) }}</strong><small>用户净 P&amp;L {{ money(item.user_net_pnl) }}</small></article></div></div>
+            <div><span class="subheading">7 月分流情况</span><div class="profit-months"><article class="profit-tile abook-tile"><span>Abook Core</span><strong>{{ money(data.profit_overview.july_book_split.abook.company_profit) }}</strong><small>用户净 P&amp;L {{ money(data.profit_overview.july_book_split.abook.user_net_pnl) }}</small></article><article class="profit-tile"><span>Book（未进 Abook）</span><strong :class="tone(data.profit_overview.july_book_split.book.company_profit)">{{ money(data.profit_overview.july_book_split.book.company_profit) }}</strong><small>用户净 P&amp;L {{ money(data.profit_overview.july_book_split.book.user_net_pnl) }}</small></article></div></div>
+          </div>
+          <p class="footnote">Abook 目前没有真实外部成交数据，按交易所对手盘利润为 0 展示；Book 利润为未进入 Abook 用户的理论反向净 P&amp;L。</p>
+        </div>
+
+        <div v-if="!error && !loading && data.selection" class="panel-card stability-panel"><div class="panel-heading"><div><span class="section-kicker">STABILITY / ANTI-OVERFIT</span><h2>稳定性与样本可信度</h2></div><span class="muted">评分只使用筛选期，7 月完全样本外</span></div><div class="stability-layout"><div class="stability-cards"><article class="signal-card"><span>稳定 Abook Core</span><strong class="positive">{{ number(data.selection.stability_overview.abook_core) }}</strong><small>稳定性评分达标且无关键风险标记</small></article><article class="signal-card"><span>Abook Watch</span><strong>{{ number(data.selection.stability_overview.abook_watch) }}</strong><small>盈利但仍需观察样本或集中度</small></article><article class="signal-card"><span>低置信度账户</span><strong class="negative">{{ number(data.selection.stability_overview.low_confidence) }}</strong><small>交易笔数、活跃天数或月份不足</small></article><article class="signal-card"><span>样本外方向一致率</span><strong>{{ percent(data.validation.diagnostics.direction_agreement_rate) }}</strong><small>{{ number(data.validation.diagnostics.direction_agreement_accounts) }} 个有明确方向的账户</small></article></div><div id="stability-chart" class="chart compact-chart"></div></div><p class="footnote">“Core”不是保证未来盈利；有效交易数据从 {{ data.coverage.source_min || '未知日期' }} 开始，原始 Deals 最早为 {{ data.coverage.source_deal_raw_min || '未知日期' }}。近三个月有交易账户：{{ number(visibleAccounts.length) }}。</p><p v-if="data.coverage.historical_deals_before_active" class="footnote warning">原始 Deals 覆盖早于有效分析覆盖；当前共有 {{ number(data.coverage.source_deal_deleted_rows) }} 条记录标记为 is_deleted=1，不纳入交易 P&amp;L。</p></div>
+
+        <div v-if="!error && !loading && data.coverage" class="notice-row"><span>{{ data.coverage.selection_start }} 至 {{ data.coverage.selection_end }} 用于筛选</span><span>{{ data.coverage.validation_start }} 至 {{ data.coverage.validation_end }} 用于验证</span><span>源数据 {{ data.coverage.source_min || '未知' }} 至 {{ data.coverage.source_max || '未知' }}</span><span v-if="data.coverage.validation_partial" class="warning">验证期为部分月份</span><span v-if="data.coverage.partial_months && data.coverage.partial_months.length" class="warning">部分月份：{{ data.coverage.partial_months.join('、') }}</span></div>
+
+        <div v-if="!error && !loading" class="chart-card panel-card"><div class="panel-heading"><div><span class="section-kicker">PERFORMANCE</span><h2>筛选期与验证期月度 P&amp;L</h2></div><div class="legend"><span class="legend-client"></span>用户净 P&amp;L <span class="legend-mirror"></span>公司理论反向 P&amp;L</div></div><div id="pnl-chart" class="chart"></div></div>
+
+        <div v-if="!error && !loading" class="split-grid">
+          <div class="panel-card"><div class="panel-heading"><div><span class="section-kicker">VALIDATION</span><h2>入选组 vs 对照组</h2></div></div><div id="validation-chart" class="chart compact-chart"></div></div>
+          <div class="panel-card"><div class="panel-heading"><div><span class="section-kicker">TRANSITIONS</span><h2>用户状态迁移</h2></div></div><table class="small-table"><thead><tr><th>分组</th><th>继续目标状态</th><th>反转</th><th>无交易</th><th>中性</th></tr></thead><tbody><tr v-for="(transition, cohort) in data.transitions" :key="cohort"><td>{{ cohortLabel(cohort) }}</td><td>{{ number(successTransition(transition, cohort)) }}</td><td>{{ number(reversalTransition(transition, cohort)) }}</td><td>{{ number(transition.inactive) }}</td><td>{{ number(transition.neutral) }}</td></tr></tbody></table></div>
+        </div>
+
+        <div v-if="!error && !loading && data.selection && data.profit_impact" class="panel-card table-card"><div class="panel-heading"><div><span class="section-kicker">PROFIT IMPACT</span><h2>Abook 理论利润影响</h2></div><span class="muted">只用 7 月样本外验证结果判断</span></div><table><thead><tr><th>分组</th><th>用户筛选期净 P&amp;L</th><th>当前理论 Bbook 净利润</th><th>假设 Abook 后</th><th>7月验证理论增量</th></tr></thead><tbody><tr v-for="cohort in ['abook_candidate', 'bbook_candidate']" :key="cohort"><td>{{ cohortLabel(cohort) }}</td><td :class="tone(data.profit_impact[cohort].selection_client_net_pnl)">{{ money(data.profit_impact[cohort].selection_client_net_pnl) }}</td><td :class="tone(data.profit_impact[cohort].current_bbook_net_pnl)">{{ money(data.profit_impact[cohort].current_bbook_net_pnl) }}</td><td>{{ money(data.profit_impact[cohort].after_abook_assumed_pnl) }}</td><td :class="tone(data.profit_impact[cohort].validation_incremental_change)">{{ money(data.profit_impact[cohort].validation_incremental_change) }}</td></tr></tbody></table><p class="footnote">理论反向利润不包含真实 Abook 点差、对冲成本、流动性成本、滑点和外部成交结果。</p></div>
+
+        <div v-if="!error && !loading && data.selection" class="panel-card table-card">
+          <div class="panel-heading"><div><span class="section-kicker">ACCOUNT DETAIL</span><h2>账户表现</h2></div><span class="muted">近三个月 P&amp;L 绝对值大于 0 · {{ number(filteredAccounts.length) }} 个匹配 · 第 {{ page }} / {{ pageCount }} 页</span></div>
+          <div class="table-toolbar"><input v-model="accountSearch" placeholder="搜索 Login、平台或账户组" /><select v-model="cohortFilter"><option value="">全部分组</option><option value="abook_candidate">Abook Core</option><option value="bbook_candidate">Bbook Core</option><option value="observation">观察组</option></select><select v-model="confidenceFilter"><option value="">全部置信度</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select><select v-model="sortKey"><option value="selection_client_net_pnl">按筛选期 P&amp;L</option><option value="stability.score">按稳定性评分</option><option value="validation_client_net_pnl">按 7 月 P&amp;L</option></select></div>
+          <div class="table-wrap"><table><thead><tr><th>平台</th><th>Login</th><th>账户组</th><th>分组</th><th>稳定性</th><th>置信等级</th><th>5–6月净 P&amp;L</th><th>7月净 P&amp;L</th><th>验证状态</th><th>交易数</th></tr></thead><tbody><tr v-for="account in pagedAccounts" :key="account.platform + '-' + account.login" @click="openAccount(account)"><td><span class="platform-tag">{{ account.platform }}</span></td><td class="mono">{{ account.login }}</td><td class="group-cell">{{ account.account_group || '—' }}</td><td><span class="cohort-tag" :class="account.cohort">{{ cohortLabel(account.cohort) }}</span></td><td><span class="score-pill">{{ number(account.stability.score) }} · {{ tierLabel(account.stability.tier) }}</span></td><td>{{ confidenceLabel(account.confidence_tier) }}</td><td :class="tone(account.selection_client_net_pnl)">{{ money(account.selection_client_net_pnl) }}</td><td :class="tone(account.validation_client_net_pnl)">{{ money(account.validation_client_net_pnl) }}</td><td>{{ statusLabel(account.validation_status) }}</td><td>{{ number(account.selection_trade_count) }} / {{ number(account.validation_trade_count) }}</td></tr></tbody></table><div v-if="filteredAccounts.length === 0" class="empty">没有符合筛选条件且近三个月 P&amp;L 不为 0 的账户。</div></div>
+          <div class="pagination"><button class="ghost-button" @click="previousPage" :disabled="page === 1">上一页</button><span>{{ number((page - 1) * pageSize + 1) }}–{{ number(Math.min(page * pageSize, filteredAccounts.length)) }} / {{ number(filteredAccounts.length) }}</span><button class="ghost-button" @click="nextPage" :disabled="page >= pageCount">下一页</button></div>
+        </div>
+
+      </section>
+    </main>
+
+    <div v-if="selectedAccount" class="drawer-backdrop" @click.self="selectedAccount = null"><aside class="drawer"><button class="close-button" @click="selectedAccount = null">×</button><span class="section-kicker">ACCOUNT PROFILE</span><h2>{{ selectedAccount.platform }} / {{ selectedAccount.login }}</h2><p class="muted">{{ selectedAccount.account_group || '未分组' }} · {{ cohortLabel(selectedAccount.cohort) }} · {{ confidenceLabel(selectedAccount.confidence_tier) }}置信</p><div class="mini-kpis"><div><span>筛选期净 P&amp;L</span><strong :class="tone(selectedAccount.selection.client_net_pnl)">{{ money(selectedAccount.selection.client_net_pnl) }}</strong></div><div><span>验证期净 P&amp;L</span><strong :class="tone(selectedAccount.validation.client_net_pnl)">{{ money(selectedAccount.validation.client_net_pnl) }}</strong></div><div><span>状态</span><strong>{{ statusLabel(selectedAccount.transition_status) }}</strong></div></div><h3>稳定性证据</h3><div class="phase-summary"><div><span>稳定性评分</span><strong>{{ number(selectedAccount.stability.score) }} · {{ tierLabel(selectedAccount.stability.tier) }}</strong></div><div><span>Top 1 日贡献</span><strong>{{ percent(selectedAccount.stability.top_positive_day_concentration) }}</strong></div><div><span>盈利日率 95% 下限</span><strong>{{ percent(selectedAccount.stability.positive_day_rate_ci95[0]) }}</strong></div><div><span>收益/回撤</span><strong>{{ number(selectedAccount.stability.return_drawdown_ratio) }}</strong></div></div><p class="footnote">风险标记：{{ selectedAccount.selection_flags.length ? selectedAccount.selection_flags.join('、') : '无' }}</p><h3>阶段指标</h3><div class="phase-summary"><div><span>筛选期胜率</span><strong>{{ percent(selectedAccount.selection.win_rate) }}</strong></div><div><span>筛选期盈亏比</span><strong>{{ number(selectedAccount.selection.payoff_ratio) }}</strong></div><div><span>筛选期 PF</span><strong>{{ pf(selectedAccount.selection.profit_factor) }}</strong></div><div><span>验证期 PF</span><strong>{{ pf(selectedAccount.validation.profit_factor) }}</strong></div><div><span>筛选期平均日利润</span><strong>{{ money(selectedAccount.selection.average_daily_profit) }}</strong></div><div><span>验证期平均日利润</span><strong>{{ money(selectedAccount.validation.average_daily_profit) }}</strong></div></div><h3>交易明细</h3><div v-if="detailLoading" class="empty">加载中…</div><table v-else class="small-table"><thead><tr><th>Symbol</th><th>交易</th><th>成交量</th><th>P&amp;L</th><th>胜率</th></tr></thead><tbody><tr v-for="symbol in detail.symbols" :key="symbol.symbol"><td>{{ symbol.symbol || '—' }}</td><td>{{ number(symbol.trade_count) }}</td><td>{{ number(symbol.volume) }}</td><td :class="tone(symbol.profit)">{{ money(symbol.profit) }}</td><td>{{ percent(symbol.win_rate) }}</td></tr></tbody></table></aside></div>
+  </div>
+  <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+  <script src="/assets/app.js?v=20260715-2"></script>
+</body>
+</html>
