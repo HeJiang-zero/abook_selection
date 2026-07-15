@@ -308,12 +308,12 @@ def build_daily_pnl_query(
         "end_exclusive": _date_end_exclusive(end),
     }
     user_conditions = ["is_deleted = 0", "has({platforms:Array(String)}, platform)"]
-    user_conditions.append("positionCaseInsensitive(\`group\`, 'test') = 0")
-    user_conditions.append("positionCaseInsensitive(\`group\`, 'demo') = 0")
+    user_conditions.append("positionCaseInsensitive(`group`, 'test') = 0")
+    user_conditions.append("positionCaseInsensitive(`group`, 'demo') = 0")
     values = filters.get("groups") or []
     if values:
         params["group_0"] = values
-        user_conditions.append("has({group_0:Array(String)}, \`group\`)")
+        user_conditions.append("has({group_0:Array(String)}, `group`)")
     if filters.get("logins"):
         login_values = sorted({int(login) for login in filters["logins"]})
         if len(login_values) <= 2000:

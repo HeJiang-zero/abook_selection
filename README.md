@@ -7,15 +7,10 @@ FastAPI 后端 + Vue 3/ECharts 前端，用于使用 5–6 月数据筛选用户
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-export CLICKHOUSE_HOST=data-collect-alb-110459182.ap-southeast-2.elb.amazonaws.com
-export CLICKHOUSE_PORT=8123
-export CLICKHOUSE_DATABASE=risk
-export CLICKHOUSE_USER=default
-export CLICKHOUSE_PASSWORD="$(sed -n 's/^ck\\.write\\.password=//p' clickhouse.md)"
-export CLICKHOUSE_SECURE=0
-.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+./run_dashboard.sh
 ```
 
+首次运行前，把本地 ClickHouse 配置写入被 Git 忽略的 `.env`（可参考 `.env.example`）。脚本会自动加载 `.env` 并启动服务。
 打开 http://localhost:8000。生产环境请使用只读 ClickHouse 账号，并通过密钥管理注入 `CLICKHOUSE_PASSWORD`。
 
 默认筛选规则为：Abook 候选满足交易笔数 `>= 20`、活跃交易天数 `>= 10`、胜率 `>= 50%`、`Profit Factor > 1`、盈亏比 `>= 0.8`、平均交易日净利润 `> 0 USD`、盈利月份占比 `>= 50%`、日盈利率 95% 下限 `>= 55%`、稳定性评分 `>= 70`、Top1 日利润贡献率 `< 20%`、峰值杠杆率 `<= 200`。月度持续性参数保留为可选增强条件，默认不额外收紧筛选。峰值杠杆超过 200 时，仅筛选期中位持仓不超过 300 秒的用户保留为短持仓例外；Bbook 候选使用对应的亏损方向条件。平均交易日利润定义为：阶段内用户净交易 P&L（`profit + storage + commission + fee`，仅 `action IN (0,1)`）除以有交易的自然日数量。账户没有亏损交易时，PF 在筛选上视为无穷大，API 中以 `null` 表示，避免 JSON 非法数值。

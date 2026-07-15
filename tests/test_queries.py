@@ -146,6 +146,18 @@ def test_daily_pnl_query_aggregates_utc_deals_and_reuses_account_boundaries():
     assert params["end_exclusive"] == "2026-07-14"
 
 
+def test_daily_pnl_query_uses_clickhouse_identifier_quoting_without_backslashes():
+    query, _ = build_daily_pnl_query(
+        platforms=["mt5"],
+        start="2026-05-01",
+        end="2026-07-13",
+        filters={"groups": ["real\\FPlive"]},
+    )
+
+    assert "positionCaseInsensitive(`group`, 'test') = 0" in query
+    assert "positionCaseInsensitive(\\`group\\`, 'test') = 0" not in query
+
+
 def test_daily_pnl_query_embeds_large_excluded_login_sets_without_http_array_params():
     query, params = build_daily_pnl_query(
         platforms=["mt5"],

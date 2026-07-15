@@ -29,6 +29,8 @@ class ClickHouseRepository:
             password=self.settings.clickhouse_password,
             database=self.settings.clickhouse_database,
             secure=self.settings.clickhouse_secure,
+            compress=self.settings.clickhouse_compress,
+            apply_server_timezone=self.settings.clickhouse_use_server_time_zone_for_dates,
         )
 
     def _rows(self, query: str, params: dict[str, Any]) -> list[dict[str, Any]]:

@@ -13,6 +13,8 @@ class Settings:
     clickhouse_user: str
     clickhouse_password: str
     clickhouse_secure: bool
+    clickhouse_compress: bool = True
+    clickhouse_use_server_time_zone_for_dates: bool = True
 
     @property
     def configured(self) -> bool:
@@ -31,4 +33,8 @@ def get_settings() -> Settings:
         clickhouse_user=os.getenv("CLICKHOUSE_USER", "default"),
         clickhouse_password=os.getenv("CLICKHOUSE_PASSWORD", ""),
         clickhouse_secure=os.getenv("CLICKHOUSE_SECURE", "0").lower() in {"1", "true", "yes"},
+        clickhouse_compress=os.getenv("CLICKHOUSE_COMPRESS", "1").lower() in {"1", "true", "yes"},
+        clickhouse_use_server_time_zone_for_dates=os.getenv(
+            "CLICKHOUSE_USE_SERVER_TIME_ZONE_FOR_DATES", "1"
+        ).lower() in {"1", "true", "yes"},
     )
