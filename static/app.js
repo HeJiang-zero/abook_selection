@@ -173,53 +173,6 @@ createApp({
         ],
       }, true);
     },
-    renderLegacyMonthlyPnlChart() {
-      const node = document.getElementById('pnl-chart');
-      if (!node || !window.echarts) return;
-      if (!this.chart) this.chart = echarts.init(node);
-      const records = this.data.monthly_series || [];
-      const months = [...new Set(records.map(item => item.month))];
-      const totalByMonth = months.map(month => records.filter(item => item.month === month).reduce((sum, item) => sum + (item.client_net_pnl || 0), 0));
-      const mirrorByMonth = months.map(month => records.filter(item => item.month === month).reduce((sum, item) => sum + (item.theoretical_mirror_pnl || 0), 0));
-      const phases = months.map(month => (records.find(item => item.month === month) || {}).phase === 'validation' ? '验证期' : '筛选期');
-      this.chart.setOption({
-        tooltip: {
-          trigger: 'axis',
-          axisPointer: { type: 'cross' },
-          formatter: params => params.map(item => `${item.marker}${item.seriesName}: ${this.money(item.value)}`).join('<br/>'),
-        },
-        legend: { data: ['用户净 P&L', '公司理论反向 P&L'], textStyle: { color: '#94a3b8' } },
-        grid: { left: 18, right: 20, top: 42, bottom: 32, containLabel: true },
-        xAxis: { type: 'category', data: months.map((month, index) => `${month} · ${phases[index]}`), axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8' } },
-        yAxis: { type: 'value', axisLabel: { color: '#94a3b8', formatter: value => this.money(value) }, splitLine: { lineStyle: { color: '#1e293b' } } },
-        series: [
-          { name: '用户净 P&L', type: 'bar', barMaxWidth: 28, data: totalByMonth, itemStyle: { color: '#38bdf8', borderRadius: [5, 5, 0, 0] } },
-          { name: '公司理论反向 P&L', type: 'line', smooth: true, symbol: 'circle', symbolSize: 7, data: mirrorByMonth, lineStyle: { width: 3, color: '#a78bfa' }, itemStyle: { color: '#a78bfa' } },
-        ],
-      }, true);
-    },
-    renderLegacyValidationChart() {
-      const node = document.getElementById('legacy_validation_chart');
-      if (!node || !window.echarts) return;
-      if (!this.legacyValidationChart) this.legacyValidationChart = echarts.init(node);
-      const cohorts = ['abook_candidate', 'bbook_candidate', 'observation'];
-      const groups = this.data.validation.groups || {};
-      this.legacyValidationChart.setOption({
-        tooltip: {
-          trigger: 'axis',
-          axisPointer: { type: 'cross' },
-          formatter: params => params.map(item => `${item.marker}${item.seriesName}: ${this.percent(item.value)}`).join('<br/>'),
-        },
-        legend: { data: ['7月盈利率', '7月亏损率'], textStyle: { color: '#94a3b8' } },
-        grid: { left: 12, right: 12, top: 42, bottom: 20, containLabel: true },
-        xAxis: { type: 'category', data: cohorts.map(cohort => this.cohortLabel(cohort)), axisLabel: { color: '#94a3b8' } },
-        yAxis: { type: 'value', max: 1, axisLabel: { color: '#94a3b8', formatter: value => `${(value * 100).toFixed(0)}%` }, splitLine: { lineStyle: { color: '#1e293b' } } },
-        series: [
-          { name: '有交易账户 7月盈利率', type: 'bar', data: cohorts.map(cohort => (groups[cohort] || {}).active_positive_account_rate || 0), itemStyle: { color: '#86efac' } },
-          { name: '有交易账户 7月亏损率', type: 'bar', data: cohorts.map(cohort => (groups[cohort] || {}).active_negative_account_rate || 0), itemStyle: { color: '#fda4af' } },
-        ],
-      }, true);
-    },
     renderStabilityChart() {
       const node = document.getElementById('stability-chart');
       if (!node || !window.echarts) return;
@@ -259,12 +212,6 @@ createApp({
     },
     statusLabel(value) {
       return ({ profitable: '盈利', loss: '亏损', neutral: '中性', inactive: '无交易', continued_profitable: '继续盈利', started_loss: '开始亏损', continued_loss: '继续亏损', turned_profit: '转为盈利' }[value]) || value || '—';
-    },
-    successTransition(transition, cohort) {
-      return transition[cohort === 'abook_candidate' ? 'continued_profitable' : cohort === 'bbook_candidate' ? 'continued_loss' : 'profitable'] || 0;
-    },
-    reversalTransition(transition, cohort) {
-      return transition[cohort === 'abook_candidate' ? 'started_loss' : cohort === 'bbook_candidate' ? 'turned_profit' : 'loss'] || 0;
     },
     tierLabel(value) { return ({ core: 'Core', watch: 'Watch', observation: '观察' }[value]) || value || '—'; },
     confidenceLabel(value) { return ({ high: '高', medium: '中', low: '低' }[value]) || value || '—'; },

@@ -38,12 +38,13 @@ def test_frontend_exposes_two_stage_controls_and_validation_sections():
 
 def test_frontend_uses_two_stage_payload_fields():
     javascript = (ROOT / "static" / "app.js").read_text()
+    html = (ROOT / "static" / "index.html").read_text()
     assert "request.selection.start" in javascript
     assert "request.validation.end" in javascript
-    assert "data.validation" in javascript
+    assert "data.validation" in javascript or "data.validation" in html
     assert "daily_book_series" in javascript
-    assert "active_positive_account_rate" in javascript
-    assert "active_negative_account_rate" in javascript
+    assert "active_positive_account_rate" in javascript or "active_positive_account_rate" in html
+    assert "active_negative_account_rate" in javascript or "active_negative_account_rate" in html
     assert "theoretical_increment" in (ROOT / "static" / "index.html").read_text()
     assert "validation_incremental_change" in (ROOT / "static" / "index.html").read_text()
     assert "rulesDirty" in javascript
