@@ -5,13 +5,14 @@ const DEFAULT_REQUEST = () => ({
   validation: { start: '2026-07-01', end: '2026-07-13' },
   rules: {
     min_trades: 20, min_active_days: 10, min_win_rate: 0.5, min_profit_factor: 1, min_payoff_ratio: 0.8, min_avg_daily_profit: 0,
-    min_selection_monthly_consistency: 0.5, neutral_band_usd: 10,
+    min_selection_monthly_consistency: 0, neutral_band_usd: 10,
     min_positive_month_rate: 0.5, max_top1_day_profit_contribution: 0.2, max_peak_leverage_ratio: 200,
     max_high_leverage_holding_seconds: 300,
     min_direction_day_rate_lower_bound: 0.55, min_stability_score: 70,
     high_confidence_trades: 100, high_confidence_days: 30,
   },
   exclude_test_accounts: true,
+  personal_candidate_list: false,
   platforms: ['mt5', 'hh_mt5'],
   filters: { groups: [], logins: [] },
 });
@@ -36,7 +37,7 @@ createApp({
       selectedAccount: null,
       detail: { symbols: [], trades: [] },
       request: DEFAULT_REQUEST(),
-      data: { coverage: null, selection: null, validation: { groups: {} }, transitions: {}, profit_impact: {}, accounts: [], monthly_series: [] },
+      data: { coverage: null, selection: null, validation: { groups: {} }, transitions: {}, profit_impact: {}, personal_candidate_list: { enabled: false }, accounts: [], monthly_series: [] },
     };
   },
   computed: {
@@ -72,7 +73,8 @@ createApp({
         'max_top1_day_profit_contribution', 'max_peak_leverage_ratio', 'max_high_leverage_holding_seconds', 'min_direction_day_rate_lower_bound',
         'min_stability_score', 'high_confidence_trades', 'high_confidence_days',
       ];
-      return keys.some(key => Number(this.request.rules[key]) !== Number(this.data.rules[key]));
+      return keys.some(key => Number(this.request.rules[key]) !== Number(this.data.rules[key]))
+        || Boolean(this.request.personal_candidate_list) !== Boolean(this.data.personal_candidate_list?.enabled);
     },
   },
   mounted() {

@@ -406,7 +406,10 @@ def _account_period_metrics(
         symbols_field = f"{phase}_symbols_traded"
         phase_medians = [_finite_decimal(row.get(median_field)) for row in rows if row.get(median_field) is not None]
         phase_symbols = [int(row.get(symbols_field, 0) or 0) for row in rows]
-        metrics["median_holding_seconds"] = _float(max(phase_medians) if phase_medians else ZERO)
+        # period_matched_stats is an account-level exact median repeated on
+        # each monthly row. Use that value once; taking max(month medians)
+        # overstates the phase median and can incorrectly reject short holds.
+        metrics["median_holding_seconds"] = _float(phase_medians[0] if phase_medians else ZERO)
         metrics["symbols_traded"] = max(phase_symbols, default=0)
     metrics["active_months"] = sum(
         1 for row in rows if int(row.get("matched_trades", 0) or 0) > 0
@@ -789,8 +792,8 @@ def _book_performance(accounts: list[dict[str, Any]], phase: str, neutral_band_u
         "neutral_accounts": len(neutral_values),
         "profitable_account_rate": _safe_ratio(Decimal(len(profitable)), Decimal(len(values))),
         "loss_account_rate": _safe_ratio(Decimal(len(losses)), Decimal(len(values))),
-        "gross_profit": float(sum(profitable, ZERO)),
-        "gross_loss": float(sum(losses, ZERO)),
+        "gross_profit": float(sum((_finite_decimal(account[phase].get("gross_wins")) for account in accounts), ZERO)),
+        "gross_loss": float(sum((_finite_decimal(account[phase].get("gross_losses")) for account in accounts), ZERO)),
         "net_pnl": float(net_pnl),
         "current_bbook_profit": float(current_bbook_profit),
         "assumed_abook_profit": float(assumed_abook_profit),
@@ -825,6 +828,8 @@ def build_two_stage_payload(
     high_confidence_trades: int = 100,
     high_confidence_days: int = 30,
     exclude_test_accounts: bool = True,
+    personal_candidate_logins: set[int] | None = None,
+    personal_candidate_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a selection-period cohort and an independent validation-period readout."""
     materialized = list(rows)
@@ -835,6 +840,8 @@ def build_two_stage_payload(
         if "test" not in str(row.get("account_group", "")).lower()
         and "demo" not in str(row.get("account_group", "")).lower()
     ]
+    personal_logins = {int(login) for login in (personal_candidate_logins or set())}
+    personal_info = dict(personal_candidate_info or {"enabled": False, "status": "disabled"})
     overview_materialized = list(overview_rows) if overview_rows is not None else list(materialized)
     overview_materialized = [
         row for row in overview_materialized
@@ -916,6 +923,17 @@ def build_two_stage_payload(
             and stability["tier"] == "core"
             else "observation"
         )
+        is_personal_candidate = int(identity["login"]) in personal_logins
+        rule_deployable = cohort in {"abook_candidate", "bbook_candidate"}
+        if is_personal_candidate:
+            cohort = "abook_candidate"
+            selection_source = (
+                "rule_and_personal_list"
+                if rule_deployable and directional_cohort == "abook_candidate"
+                else "personal_candidate_list"
+            )
+        else:
+            selection_source = "rule_filter" if rule_deployable else "observation"
         validation_status = _status(
             validation["client_net_pnl"], validation["trade_count"], neutral_band_usd
         )
@@ -929,6 +947,8 @@ def build_two_stage_payload(
             "cohort": cohort,
             "base_cohort": directional_cohort,
             "deployable": cohort in {"abook_candidate", "bbook_candidate"},
+            "is_personal_candidate": is_personal_candidate,
+            "selection_source": selection_source,
             "validation_status": validation_status,
             "transition_status": _transition(cohort, validation_status),
             "selection": selection,
@@ -974,10 +994,12 @@ def build_two_stage_payload(
     }
     population_counts = [
         int(row["population_unique_accounts"])
-        for row in materialized
+        for row in overview_materialized
         if row.get("population_unique_accounts") is not None
     ]
-    unique_accounts = max(population_counts) if population_counts else len({(account["platform"], account["login"]) for account in accounts})
+    unique_accounts = max(population_counts) if population_counts else len({
+        (row["platform"], int(row["login"])) for row in overview_materialized
+    })
     selection_counts = {
         "eligible_accounts": unique_accounts,
         "unique_accounts": unique_accounts,
@@ -987,7 +1009,16 @@ def build_two_stage_payload(
         "directional_abook_candidates": sum(1 for account in accounts if account["base_cohort"] == "abook_candidate"),
         "directional_bbook_candidates": sum(1 for account in accounts if account["base_cohort"] == "bbook_candidate"),
         "observation": len(by_cohort["observation"]),
+        "personal_abook_candidates": sum(1 for account in accounts if account["is_personal_candidate"] and account["cohort"] == "abook_candidate"),
+        "personal_added_abook_candidates": sum(1 for account in accounts if account["is_personal_candidate"] and account["selection_source"] == "personal_candidate_list"),
+        "personal_overlap_abook_candidates": sum(1 for account in accounts if account["is_personal_candidate"] and account["selection_source"] == "rule_and_personal_list"),
     }
+    personal_matched = [account for account in accounts if account["is_personal_candidate"]]
+    personal_info.update({
+        "matched_accounts": len(personal_matched),
+        "added_accounts": sum(1 for account in personal_matched if account["selection_source"] == "personal_candidate_list"),
+        "overlap_accounts": sum(1 for account in personal_matched if account["selection_source"] == "rule_and_personal_list"),
+    })
     stability_overview = {
         "abook_core": sum(1 for account in accounts if account["base_cohort"] == "abook_candidate" and account["stability"]["tier"] == "core"),
         "abook_watch": sum(1 for account in accounts if account["base_cohort"] == "abook_candidate" and account["stability"]["tier"] == "watch"),
@@ -1222,6 +1253,7 @@ def build_two_stage_payload(
         "control_group": validation_groups["observation"],
         "transitions": {cohort: dict(statuses) for cohort, statuses in transitions.items()},
         "profit_impact": profit_impact,
+        "personal_candidate_list": personal_info,
         "profit_overview": profit_overview,
         "book_performance": book_performance,
         "monthly_series": monthly_series,

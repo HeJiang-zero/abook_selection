@@ -31,6 +31,7 @@ def test_default_strategy_filters_are_profit_factor_and_average_daily_profit():
     assert request.rules.min_stability_score == 70
     assert request.rules.min_win_rate == 0.5
     assert request.rules.min_selection_monthly_consistency == 0.0
+    assert request.personal_candidate_list is False
 
 
 def test_analysis_request_accepts_separate_selection_and_validation_rules():
@@ -50,3 +51,9 @@ def test_analysis_request_accepts_separate_selection_and_validation_rules():
 def test_old_position_management_rule_is_rejected():
     with pytest.raises(ValidationError):
         AnalysisRequest(rules={"max_top_day_concentration": 0.5})
+
+
+def test_analysis_request_accepts_personal_candidate_list_switch():
+    request = AnalysisRequest(personal_candidate_list=True)
+
+    assert request.personal_candidate_list is True

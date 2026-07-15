@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .models import AnalysisRequest, FilterOptions
+from .personal_candidates import load_personal_candidates
 from .repository import ClickHouseRepository, RepositoryConfigurationError
 from .risk import build_local_risk_filter
 from .service import build_account_detail_payload, build_analysis_payload, build_two_stage_payload
@@ -51,14 +52,22 @@ def filter_options(repository: ClickHouseRepository = Depends(get_repository)) -
 @app.post("/api/abook/analysis")
 def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depends(get_repository)) -> dict:
     try:
+        personal_candidates = load_personal_candidates()
+        personal_candidates_enabled = request.personal_candidate_list and personal_candidates.status == "ready"
+        personal_candidate_logins = personal_candidates.login_ids if personal_candidates_enabled else frozenset()
         risk_filter = build_local_risk_filter(request)
         effective_request = risk_filter.apply(request)
         overview_rows = None
-        if risk_filter.allowed_logins is not None or risk_filter.excluded_logins:
+        if personal_candidates_enabled or risk_filter.allowed_logins is not None or risk_filter.excluded_logins:
             # Company-profit overview must remain population-level. Do not let
             # the Abook leverage rule remove users from the monthly baseline.
             overview_rows = repository.fetch_analysis(request)
-        if risk_filter.is_empty_for(request):
+        if personal_candidates_enabled:
+            # Personal candidates are an explicit Abook override. Keep the
+            # normal platform/group/login/test-demo query boundaries, but do
+            # not let the local leverage snapshot remove them.
+            rows = overview_rows or []
+        elif risk_filter.is_empty_for(request):
             rows = []
         else:
             excluded_logins = risk_filter.excluded_logins
@@ -99,6 +108,10 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             high_confidence_trades=rules.high_confidence_trades,
             high_confidence_days=rules.high_confidence_days,
             exclude_test_accounts=request.exclude_test_accounts,
+            personal_candidate_logins=set(personal_candidate_logins),
+            personal_candidate_info=(
+                personal_candidates.summary(enabled=request.personal_candidate_list)
+            ),
         )
         payload["risk_management"] = risk_filter.summary()
         return payload

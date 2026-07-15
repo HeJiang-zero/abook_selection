@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Abook 筛选与 7 月验证｜三个月账户回溯</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260715-5" />
+  <link rel="stylesheet" href="/assets/styles.css?v=20260715-6" />
 </head>
 <body>
   <div id="app" v-cloak>
@@ -34,6 +34,7 @@
         </div>
         <div class="rule-section"><strong>稳定性与风险管理参数（均可修改）</strong><div class="rule-grid"><label>盈利月份占比下限<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.min_positive_month_rate" /></label><label>最低月度持续性<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.min_selection_monthly_consistency" /></label><label>Top1 日利润贡献率上限<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.max_top1_day_profit_contribution" /></label><label>最大峰值杠杆率<input type="number" min="0.1" step="0.5" v-model.number="request.rules.max_peak_leverage_ratio" /></label><label>高杠杆短持仓例外（秒）<input type="number" min="0" step="1" v-model.number="request.rules.max_high_leverage_holding_seconds" /></label><label>日盈利率 95% 下限<input type="number" min="0" max="1" step="0.05" v-model.number="request.rules.min_direction_day_rate_lower_bound" /></label><label>最低稳定性评分<input type="number" min="0" max="100" step="1" v-model.number="request.rules.min_stability_score" /></label><label>高置信交易数<input type="number" min="0" step="1" v-model.number="request.rules.high_confidence_trades" /></label><label>高置信活跃天数<input type="number" min="0" step="1" v-model.number="request.rules.high_confidence_days" /></label></div><p class="coverage-note">Top1 日利润贡献率必须严格低于阈值；杠杆率使用本地风险快照的峰值日交易名义金额 / 上月余额。峰值杠杆超过上限时，仅中位持仓不超过例外秒数的用户可保留；上月余额为 0 的用户跳过杠杆过滤，但仍执行其他规则。</p></div>
         <label class="check check-wide"><input type="checkbox" v-model="request.exclude_test_accounts" /> 排除账户组中含 test / demo 的测试账户</label>
+        <label class="check check-wide"><input type="checkbox" v-model="request.personal_candidate_list" /> 个人候选名单（加入 Abook）</label>
 
         <label>服务器</label><div class="check-row"><label class="check"><input type="checkbox" value="mt5" v-model="request.platforms"> mt5</label><label class="check"><input type="checkbox" value="hh_mt5" v-model="request.platforms"> hh_mt5</label></div>
         <label>账户组（逗号分隔）<input v-model="groupInput" placeholder="real\\FPlive" /></label>
@@ -41,6 +42,7 @@
         <button class="primary-button" @click="loadAnalysis" :disabled="loading || request.platforms.length === 0">{{ loading ? '正在计算…' : '应用筛选与验证' }}</button>
         <p v-if="data.rules" class="applied-rules"><strong>{{ rulesDirty ? '待应用参数' : '已应用规则' }}</strong>：交易数 ≥ {{ number(displayRule('min_trades')) }} · 活跃天数 ≥ {{ number(displayRule('min_active_days')) }} · 胜率 ≥ {{ percent(displayRule('min_win_rate')) }} · PF ≥ {{ number(displayRule('min_profit_factor')) }} · 盈亏比 ≥ {{ number(displayRule('min_payoff_ratio')) }} · 平均日利润 ≥ {{ money(displayRule('min_avg_daily_profit')) }} · 月度持续性 ≥ {{ percent(displayRule('min_selection_monthly_consistency')) }} · Top1 日利润贡献率 < {{ percent(displayRule('max_top1_day_profit_contribution')) }} · 最大峰值杠杆率 ≤ {{ number(displayRule('max_peak_leverage_ratio')) }} · 高杠杆短持仓例外 ≤ {{ number(displayRule('max_high_leverage_holding_seconds')) }} 秒 · 稳定性评分 ≥ {{ number(displayRule('min_stability_score')) }} · 日盈利率下限 ≥ {{ percent(displayRule('min_direction_day_rate_lower_bound')) }}<span v-if="rulesDirty" class="warning">｜参数已修改，点击“应用筛选与验证”后才会重新计算</span><span v-else class="positive">｜本次结果已按这些参数计算</span></p>
         <p v-if="data.risk_management" class="coverage-note">风险快照：{{ data.risk_management.status }} · {{ riskModeLabel(data.risk_management.filter_mode) }} · {{ data.risk_management.records }} 个用户；快照只用于筛选期杠杆过滤。</p>
+        <p v-if="data.personal_candidate_list" class="coverage-note">个人候选名单：{{ data.personal_candidate_list.enabled ? '已启用' : '未启用' }} · 去重 Login {{ number(data.personal_candidate_list.unique_logins) }} · 匹配账户 {{ number(data.personal_candidate_list.matched_accounts) }} · 新增 Abook {{ number(data.personal_candidate_list.added_accounts) }} · 与原规则重叠 {{ number(data.personal_candidate_list.overlap_accounts) }}<span v-if="data.personal_candidate_list.status !== 'ready'" class="warning">（{{ data.personal_candidate_list.status }}）</span></p>
         <p class="coverage-note">筛选规则只使用 5–6 月，7 月只用于验证，不参与候选分组。</p>
       </aside>
 
@@ -110,6 +112,6 @@
   </div>
   <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
-  <script src="/assets/app.js?v=20260715-5"></script>
+  <script src="/assets/app.js?v=20260715-6"></script>
 </body>
 </html>

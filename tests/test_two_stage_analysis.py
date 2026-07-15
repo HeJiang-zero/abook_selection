@@ -112,6 +112,9 @@ def test_two_stage_analysis_separates_selection_and_validation_and_keeps_inactiv
         "directional_abook_candidates": 1,
         "directional_bbook_candidates": 1,
         "observation": 1,
+        "personal_abook_candidates": 0,
+        "personal_added_abook_candidates": 0,
+        "personal_overlap_abook_candidates": 0,
     }
     accounts = {account["login"]: account for account in result["accounts"]}
     assert accounts[1]["cohort"] == "abook_candidate"
@@ -424,6 +427,7 @@ def test_profit_overview_uses_stable_unfiltered_population_rows():
     assert monthly["2026-05"]["user_net_pnl"] == 50.0
     assert monthly["2026-06"]["user_net_pnl"] == 50.0
     assert monthly["2026-05"]["active_accounts"] == 2
+    assert result["selection"]["counts"]["eligible_accounts"] == 2
 
 
 def test_two_stage_analysis_uses_source_unique_account_count_and_hides_zero_pnl_accounts():
@@ -557,7 +561,7 @@ def test_two_stage_analysis_uses_exact_cross_period_statistics():
     second = row(500, "06", trades=1, wins=1, losses=0, market=5, net=5, active_days=1, daily_sum=5)
     for item in (first, second):
         item["market_pnl"] = item["deal_market_pnl"]
-        item["selection_median_holding_seconds"] = Decimal("42")
+        item["selection_median_holding_seconds"] = Decimal("42") if item is first else Decimal("90")
         item["selection_symbols_traded"] = 3
     first["daily_pnl_sum_for_variance"] = Decimal("4")
     first["daily_pnl_square_sum"] = Decimal("10")
@@ -614,7 +618,45 @@ def test_two_stage_analysis_exposes_book_performance_and_finite_payload():
     )
 
     assert result["book_performance"]["selection"]["abook"]["net_pnl"] == 200.0
+    assert result["book_performance"]["selection"]["abook"]["gross_profit"] == 300.0
+    assert result["book_performance"]["selection"]["abook"]["gross_loss"] == -100.0
     assert result["book_performance"]["selection"]["bbook"]["net_pnl"] == -200.0
     assert result["book_performance"]["selection"]["abook"]["theoretical_increment"] == 200.0
     assert result["book_performance"]["selection"]["bbook"]["theoretical_increment"] == -200.0
     json.dumps(result, allow_nan=False)
+
+
+def test_personal_candidate_list_forces_union_without_duplicate_account_impact():
+    rows = [
+        row(601, "05", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100),
+        row(601, "06", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100),
+        row(601, "07", trades=10, wins=8, losses=2, market=40, net=30,
+            gross_wins=60, gross_losses=-20, active_days=5, daily_sum=30),
+        row(602, "05", trades=20, wins=5, losses=15, market=-120, net=-100,
+            gross_wins=50, gross_losses=-160, active_days=10, daily_sum=-100),
+        row(602, "06", trades=20, wins=5, losses=15, market=-120, net=-100,
+            gross_wins=50, gross_losses=-160, active_days=10, daily_sum=-100),
+        row(602, "07", trades=10, wins=8, losses=2, market=25, net=20,
+            gross_wins=50, gross_losses=-15, active_days=5, daily_sum=20),
+    ]
+
+    result = build_two_stage_payload(
+        rows,
+        personal_candidate_logins={601, 602},
+        personal_candidate_info={"enabled": True, "status": "ready", "unique_logins": 2},
+        selection_start="2026-05-01", selection_end="2026-06-30",
+        validation_start="2026-07-01", validation_end="2026-07-13",
+        min_trades=20, min_active_days=10, min_profit_factor=1,
+        min_avg_daily_profit=0, min_positive_month_rate=0,
+        max_top1_day_profit_contribution=1,
+        min_direction_day_rate_lower_bound=0, min_stability_score=0,
+    )
+
+    assert result["selection"]["counts"]["abook_candidates"] == 2
+    assert result["selection"]["counts"]["personal_abook_candidates"] == 2
+    assert result["selection"]["counts"]["personal_added_abook_candidates"] == 1
+    assert result["selection"]["counts"]["personal_overlap_abook_candidates"] == 1
+    assert result["profit_impact"]["abook_candidate"]["validation_incremental_change"] == 50.0
+    assert len([account for account in result["accounts"] if account["login"] == 601]) == 1

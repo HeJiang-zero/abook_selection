@@ -69,9 +69,14 @@ def test_filter_panel_keeps_apply_button_reachable_when_advanced_rules_are_open(
 
 def test_frontend_shows_applied_rule_confirmation():
     html = (ROOT / "static" / "index.html").read_text()
+    javascript = (ROOT / "static" / "app.js").read_text()
     assert "已应用规则" in html
     assert "data.rules" in html
     assert "data.selection && data.profit_impact" in html
     assert "/assets/app.js?v=" in html
     assert "账户表现" in html
     assert "test / demo" in html
+    assert "个人候选名单（加入 Abook）" in html
+    assert "request.personal_candidate_list" in html
+    assert "personal_candidate_list" in javascript
+    assert "app.js?v=20260715-6" in html

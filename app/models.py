@@ -60,6 +60,7 @@ class AnalysisRequest(BaseModel):
     filters: AnalysisFilters = Field(default_factory=AnalysisFilters)
     rules: AnalysisRules = Field(default_factory=AnalysisRules)
     exclude_test_accounts: bool = True
+    personal_candidate_list: bool = False
 
     # Backward-compatible fields for old callers. New callers should use the
     # explicit selection/validation/rules structure.
