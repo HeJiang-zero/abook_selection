@@ -2,93 +2,58 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FRONTEND = ROOT / "frontend"
 
 
-def test_frontend_exposes_two_stage_controls_and_validation_sections():
-    html = (ROOT / "static" / "index.html").read_text()
-    assert "筛选开始日期" in html
-    assert "验证开始日期" in html
-    assert "最低交易笔数" in html
-    assert "理论反向利润" in html
-    assert "profit_overview" in html
-    assert "visibleAccounts" in html
-    assert "Abook / Bbook 盈亏分析" in html
-    assert "book_performance" in html
-    assert "Abook 7月验证理论增量" in html
-    assert "筛选期理论增量" not in html
-    assert "入选组 vs 对照组" not in html
-    assert "TRANSITIONS" not in html
-    assert "PROFIT IMPACT" not in html
-    assert "abook-daily-pnl-chart" in html
-    assert "bbook-daily-pnl-chart" in html
-    assert "monthly_consistency_ratio" in html or "最低月度持续性" in html
-    assert "待应用参数" in html
-    assert "Top1 日利润贡献率" in html
-    assert "最大峰值杠杆率" in html
-    assert "高杠杆短持仓例外" in html
-    for rule in [
-        "min_active_days", "min_win_rate", "min_profit_factor", "min_payoff_ratio",
-        "min_positive_month_rate", "min_direction_day_rate_lower_bound",
-        "min_stability_score", "max_top1_day_profit_contribution",
-        "max_peak_leverage_ratio", "max_high_leverage_holding_seconds",
-    ]:
-        assert f'v-model.number="request.rules.{rule}"' in html
-    assert "max_top_day_concentration" not in html
+def _source(name: str) -> str:
+    return (FRONTEND / "src" / name).read_text()
 
 
-def test_frontend_uses_two_stage_payload_fields():
-    javascript = (ROOT / "static" / "app.js").read_text()
-    html = (ROOT / "static" / "index.html").read_text()
-    assert "request.selection.start" in javascript
-    assert "request.validation.end" in javascript
-    assert "data.validation" in javascript or "data.validation" in html
-    assert "daily_book_series" in javascript
-    assert "active_positive_account_rate" in javascript or "active_positive_account_rate" in html
-    assert "active_negative_account_rate" in javascript or "active_negative_account_rate" in html
-    assert "theoretical_increment" in (ROOT / "static" / "index.html").read_text()
-    assert "validation_incremental_change" in (ROOT / "static" / "index.html").read_text()
-    assert "rulesDirty" in javascript
-    assert "max_peak_leverage_ratio" in javascript
-    assert "max_high_leverage_holding_seconds" in javascript
+def test_vite_project_and_build_output_are_present():
+    package = (FRONTEND / "package.json").read_text()
+    index = (ROOT / "static" / "index.html").read_text()
+    assert '"build": "vite build --outDir ../static"' in package
+    assert '"vue"' in package
+    assert '"echarts"' in package
+    assert 'src="/assets/app.js"' in index
+    assert 'href="/assets/styles.css"' in index
+    assert (ROOT / "static" / "assets" / "app.js").exists()
+    assert (ROOT / "static" / "assets" / "styles.css").exists()
 
 
-def test_frontend_exposes_stability_controls_and_interactive_account_table():
-    html = (ROOT / "static" / "index.html").read_text()
-    javascript = (ROOT / "static" / "app.js").read_text()
-    assert "稳定 Abook" in html
-    assert "置信等级" in html
-    assert "accountSearch" in html
-    assert "pageSize" in html
-    assert "stability" in html
-    assert "confidence_tier" in html
-    assert "min_stability_score" in javascript
-    assert "axisPointer: { type: 'cross' }" in javascript
-    assert "filteredAccounts" in javascript
+def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
+    app = _source("App.vue")
+    sidebar = (FRONTEND / "src" / "components" / "FilterSidebar.vue").read_text()
+    assert "总览" in app
+    assert "盈亏结构" in app
+    assert "用户结构" in app
+    assert "风险敞口" in app
+    assert "分流质量" in app
+    assert "参数寻优" in app
+    assert "个人候选名单" in sidebar
+    assert "马丁" in sidebar
+    for rule in ["min_trades", "min_stability_score", "max_peak_leverage_ratio", "excluded_martingale_levels"]:
+        assert rule in app or rule in sidebar
 
 
-def test_filter_panel_keeps_apply_button_reachable_when_advanced_rules_are_open():
-    css = (ROOT / "static" / "styles.css").read_text()
+def test_frontend_uses_new_analysis_actions_and_book_lazy_load():
+    api = _source("api.ts")
+    app = _source("App.vue")
+    assert "/api/abook/analysis" in api
+    assert "/api/abook/sweep" in api
+    assert "/api/abook/export" in api
+    assert "/api/abook/book-analytics" in api
+    assert "loadBook" in app
+    assert "MisjudgeAnalysis" in app
+    assert "SelectionFunnel" in app
+    assert "AccountsTable" in app
+    assert "AccountDrawer" in app
+
+
+def test_frontend_has_martingale_drawer_and_responsive_sidebar_contract():
+    drawer = (FRONTEND / "src" / "components" / "AccountDrawer.vue").read_text()
+    css = (FRONTEND / "src" / "style.css").read_text()
+    assert "layer1" in drawer and "layer5" in drawer
+    assert "martingale_risk_level" in drawer
     assert "max-height: calc(100vh - 36px)" in css
     assert "overflow-y: auto" in css
-
-
-def test_frontend_shows_applied_rule_confirmation():
-    html = (ROOT / "static" / "index.html").read_text()
-    javascript = (ROOT / "static" / "app.js").read_text()
-    assert "已应用规则" in html
-    assert "data.rules" in html
-    assert "data.selection && data.profit_impact" not in html
-    assert "/assets/app.js?v=" in html
-    assert "账户表现" in html
-    assert "个人候选名单（加入 Abook）" in html
-    assert "request.personal_candidate_list" in html
-    assert "personal_candidate_list" in javascript
-    assert "app.js?v=20260715-8" in html
-    assert "中性区间 USD" not in html
-    assert "request.exclude_test_accounts" not in javascript
-    assert "formatApiError" in javascript
-    assert "renderValidationChart" not in javascript
-    assert "validation-chart" not in html
-    assert "data.selection && data.profit_impact" not in html
-    assert '<option value="observation">' not in html
-    assert "account.cohort === 'abook_candidate' ? 'abook_candidate' : 'bbook_candidate'" in javascript
