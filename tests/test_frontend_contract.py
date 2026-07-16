@@ -17,8 +17,8 @@ def test_vite_project_and_build_output_are_present():
     assert '"echarts"' in package
     assert 'src="/assets/app.js"' in index
     assert 'href="/assets/styles.css"' in index
-    assert (ROOT / "static" / "assets" / "app.js").exists()
-    assert (ROOT / "static" / "assets" / "styles.css").exists()
+    assert (ROOT / "static" / "app.js").exists()
+    assert (ROOT / "static" / "styles.css").exists()
 
 
 def test_frontend_contains_filter_controls_and_all_phase_six_tabs():

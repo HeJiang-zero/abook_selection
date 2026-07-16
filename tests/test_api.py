@@ -13,7 +13,7 @@ def test_dashboard_shell_is_served():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "三个月账户回溯" in response.text
+    assert "Abook 筛选与 Book 分析" in response.text
 
 
 def test_health_endpoint_reports_service_status():

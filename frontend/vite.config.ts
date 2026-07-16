@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
+  base: '/assets/',
   plugins: [vue()],
   server: {
     port: 5173,
@@ -11,9 +12,9 @@ export default defineConfig({
     emptyOutDir: false,
     rollupOptions: {
       output: {
-        entryFileNames: 'assets/app.js',
-        chunkFileNames: 'assets/[name].js',
-        assetFileNames: (asset) => asset.name?.endsWith('.css') ? 'assets/styles.css' : 'assets/[name][extname]',
+        entryFileNames: 'app.js',
+        chunkFileNames: '[name].js',
+        assetFileNames: (asset) => asset.name?.endsWith('.css') ? 'styles.css' : '[name][extname]',
       },
     },
   },

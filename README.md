@@ -4,6 +4,27 @@ FastAPI 后端 + Vue 3/ECharts 前端，用于使用 5–6 月数据筛选用户
 
 ## 运行
 
+### Phase 0–6 升级功能
+
+马丁快照探查和构建：
+
+```bash
+.venv/bin/python scripts/probe_martingale_schema.py
+.venv/bin/python scripts/build_martingale_snapshot.py --selection-start 2026-05-01 --selection-end 2026-06-30
+```
+
+前端构建：
+
+```bash
+cd frontend
+pnpm install --ignore-scripts
+pnpm run build
+cd ..
+./run_dashboard.sh
+```
+
+构建产物输出到 `static/`，FastAPI 通过 `/assets` 托管。页面包含马丁状态与五层明细、误判成本、筛选漏斗、Book 分析、参数寻优和 Abook CSV 导出。
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
