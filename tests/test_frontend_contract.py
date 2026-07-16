@@ -50,6 +50,18 @@ def test_frontend_uses_new_analysis_actions_and_book_lazy_load():
     assert "AccountDrawer" in app
 
 
+def test_frontend_exposes_interactive_sweep_book_metrics_and_account_paging():
+    sweep = (FRONTEND / "src" / "components" / "SweepPanel.vue").read_text()
+    books = (FRONTEND / "src" / "components" / "BookPerformance.vue").read_text()
+    accounts = (FRONTEND / "src" / "components" / "AccountsTable.vue").read_text()
+    assert "maxMisjudgeCost" in sweep
+    assert "applyRules" in sweep
+    for metric in ["max_drawdown", "symbol_heatmap", "daily_turnover", "company_profit_comparison"]:
+        assert metric in books
+    for control in ["sortBy", "pageSize", "page"]:
+        assert control in accounts
+
+
 def test_frontend_has_martingale_drawer_and_responsive_sidebar_contract():
     drawer = (FRONTEND / "src" / "components" / "AccountDrawer.vue").read_text()
     css = (FRONTEND / "src" / "style.css").read_text()

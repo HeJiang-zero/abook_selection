@@ -14,6 +14,21 @@ RISK_LEVELS = ("extreme", "high", "medium", "low")
 DEFAULT_EXCLUDED_LEVELS = ("extreme", "high", "medium")
 
 
+def _valid_record(record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if not isinstance(record.get("platform"), str):
+        return False
+    try:
+        int(record["login"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if record.get("risk_level") not in RISK_LEVELS:
+        return False
+    layer_hits = record.get("layer_hits", {})
+    return isinstance(layer_hits, dict) and all(isinstance(value, bool) for value in layer_hits.values())
+
+
 def snapshot_path() -> Path:
     return Path(os.getenv("ABOOK_MARTINGALE_SNAPSHOT_PATH", str(DEFAULT_SNAPSHOT_PATH)))
 
@@ -71,6 +86,7 @@ class MartingaleSnapshot:
     def summary(self, excluded_levels: tuple[str, ...] | list[str] | set[str] = DEFAULT_EXCLUDED_LEVELS) -> dict[str, Any]:
         return {
             "status": self.status,
+            "message": "马丁过滤已生效" if self.status == "ready" else f"马丁过滤未生效：快照状态为 {self.status}",
             "path": str(self.path),
             "selection_start": self.selection_start,
             "selection_end": self.selection_end,
@@ -106,6 +122,8 @@ def load_martingale_snapshot(
         status = "stale"
     raw_records = payload.get("records", [])
     if not isinstance(raw_records, list):
+        return MartingaleSnapshot(path, None, None, tuple(), "", tuple(), "invalid")
+    if not all(_valid_record(record) for record in raw_records):
         return MartingaleSnapshot(path, None, None, tuple(), "", tuple(), "invalid")
     records = tuple(raw_records) if status == "ready" else tuple()
     return MartingaleSnapshot(

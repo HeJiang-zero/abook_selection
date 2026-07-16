@@ -1445,12 +1445,29 @@ def build_two_stage_payload(
         and account.get("stability", {}).get("tier") == "core"
         and not account.get("martingale_blocked", False)
     )
+    with_list_validation_increment = sum(
+        float(account.get("validation", {}).get("client_net_pnl", 0.0))
+        for account in by_cohort["abook_candidate"]
+    )
+    without_list_accounts = [
+        account for account in accounts
+        if account.get("base_cohort") == "abook_candidate"
+        and account.get("stability", {}).get("tier") == "core"
+        and not account.get("martingale_blocked", False)
+    ]
+    without_list_validation_increment = sum(
+        float(account.get("validation", {}).get("client_net_pnl", 0.0))
+        for account in without_list_accounts
+    )
     personal_candidate_impact = {
         "enabled": bool(personal_info.get("enabled")),
         "with_list_abook_accounts": len(by_cohort["abook_candidate"]),
         "without_list_abook_accounts": without_personal_count,
         "abook_account_delta": len(by_cohort["abook_candidate"]) - without_personal_count,
-        "definition": "Without-list count is the same in-memory cohort with personal overrides removed; validation impact is recomputed by sweep when exact comparison is needed.",
+        "with_list_validation_increment": round(with_list_validation_increment, 6),
+        "without_list_validation_increment": round(without_list_validation_increment, 6),
+        "validation_increment_delta": round(with_list_validation_increment - without_list_validation_increment, 6),
+        "definition": "Without-list metrics remove personal overrides from the same in-memory population while preserving the martingale hard block.",
     }
     return {
         "coverage": {

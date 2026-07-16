@@ -28,7 +28,7 @@ cd ..
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-./run_dashboard.sh
+cd /Users/jianghe/abook_hedging && ./run_dashboard.sh
 ```
 
 首次运行前，把本地 ClickHouse 配置写入被 Git 忽略的 `.env`（可参考 `.env.example`）。脚本会自动加载 `.env` 并启动服务。
@@ -45,6 +45,9 @@ python3 -m venv .venv
 - `GET /api/health`
 - `GET /api/abook/filters`
 - `POST /api/abook/analysis`
+- `POST /api/abook/sweep`
+- `GET /api/abook/export` / `POST /api/abook/export`
+- `POST /api/abook/book-analytics`
 - `GET /api/abook/accounts/{platform}/{login}`
 
 分析请求使用显式阶段窗口：

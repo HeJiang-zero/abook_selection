@@ -4,10 +4,11 @@
 
 ## 自动化验证
 
-- `.venv/bin/python -m pytest -q`：82 passed，0 failed；仅有现有 urllib3/LibreSSL warning。
+- `.venv/bin/python -m pytest -q`：86 passed，0 failed；仅有现有 urllib3/LibreSSL warning。
 - `frontend` 使用桌面 Bundled Node 24.14.0 + pnpm 11.7.0 构建：Vite 6.4.3 exit 0。
 - FastAPI `/api/health`：200，返回 `{"status":"ok","service":"abook-dashboard"}`。
 - `/`、`/assets/app.js`、`/assets/styles.css`：均返回 200。
+- 浏览器实际打开 `http://127.0.0.1:8000/`：页面标题、六个 Tab、马丁筛选控件和参数寻优表单均可见；切换 Book Tab 显示懒加载状态；浏览器无 error/warning 日志。
 
 ## Phase 0 真实数据
 
@@ -31,4 +32,4 @@
 
 ## 结论
 
-页面静态资源、健康检查、默认分析和新增分析字段均已实际验证。参数寻优、CSV 导出和 Book 分析通过 pytest/FakeRepository 契约验证；它们不会在前端静态加载时触发，分别在用户操作或切换 Tab 时请求。
+页面静态资源、健康检查、默认分析和新增分析字段均已实际验证。参数寻优、CSV 导出和 Book 分析通过 pytest/FakeRepository 契约验证；它们不会在前端静态加载时触发，分别在用户操作或切换 Tab 时请求。Book 分析包含回撤、Top 5/10/20 集中度、P&L/胜率/PF 分布、品种差集、日度多空 turnover、峰值敞口、逐日命中曲线和分流前后公司利润对比。

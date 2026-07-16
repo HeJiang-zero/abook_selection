@@ -84,11 +84,25 @@ def evaluate_sweep(
     grid: dict[str, list[Any]],
     objective: str,
     max_misjudge_cost: float | None,
+    *,
+    personal_candidate_logins: set[int] | None = None,
+    martingale_snapshot: Any | None = None,
 ) -> dict[str, Any]:
     if objective == "increment_with_cost_cap" and max_misjudge_cost is None:
         raise ValueError("max_misjudge_cost is required for increment_with_cost_cap")
     rule_sets = expand_rule_grid(grid, base_rules)
-    results = [_result_row(classify_accounts(context, rules), rules) for rules in rule_sets]
+    results = [
+        _result_row(
+            classify_accounts(
+                context,
+                rules,
+                personal_candidate_logins=personal_candidate_logins,
+                martingale_snapshot=martingale_snapshot,
+            ),
+            rules,
+        )
+        for rules in rule_sets
+    ]
     if objective == "increment_with_cost_cap":
         results = [row for row in results if row["misjudge_cost"] <= float(max_misjudge_cost)]
     sort_key = {

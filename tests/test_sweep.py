@@ -1,9 +1,11 @@
 from datetime import datetime
 from decimal import Decimal
+import json
 
 import pytest
 
 from app.models import AnalysisRules
+from app.martingale import load_martingale_snapshot
 from app.service import prepare_analysis_context
 from app.sweep import evaluate_sweep, expand_rule_grid
 
@@ -62,3 +64,24 @@ def test_sweep_reports_validation_increment_and_misjudge_cost():
     assert row["abook_core"] == 2
     assert row["misjudge_cost"] == 25.0
     assert row["validation_increment"] == 5.0
+
+
+def test_sweep_reuses_ready_martingale_snapshot_for_every_combination(tmp_path):
+    path = tmp_path / "snapshot.json"
+    path.write_text(json.dumps({
+        "selection_start": "2026-05-01",
+        "selection_end": "2026-06-30",
+        "platforms": ["mt5"],
+        "window_type": "7D_SLIDING",
+        "records": [{"platform": "mt5", "login": 1, "risk_level": "high", "layer_hits": {"layer1": True}}],
+    }))
+    snapshot = load_martingale_snapshot(path, "2026-05-01", "2026-06-30", ["mt5"])
+
+    result = evaluate_sweep(
+        _context(), _rules(), {"min_win_rate": [0.5]}, "validation_increment", None,
+        martingale_snapshot=snapshot,
+    )
+
+    row = result["results"][0]
+    assert row["abook_core"] == 1
+    assert row["martingale_excluded"] == 1

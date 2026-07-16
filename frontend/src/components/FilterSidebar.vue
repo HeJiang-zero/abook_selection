@@ -16,10 +16,12 @@ const emit = defineEmits<{ (event: 'apply'): void; (event: 'reset'): void }>()
     <label class="wide">最低交易笔数<input v-model.number="request.rules.min_trades" type="number" min="0"></label>
     <label class="wide">最低稳定性评分<input v-model.number="request.rules.min_stability_score" type="number" min="0" max="100"></label>
     <label class="wide">最大峰值杠杆率<input v-model.number="request.rules.max_peak_leverage_ratio" type="number" min="0"></label>
+    <div class="filter-group"><strong>核心规则</strong><label>最低胜率<input v-model.number="request.rules.min_win_rate" type="number" min="0" max="1" step="0.01"></label><label>最低 Profit Factor<input v-model.number="request.rules.min_profit_factor" type="number" min="0" step="0.01"></label><label>最低平均日利润<input v-model.number="request.rules.min_avg_daily_profit" type="number" step="0.01"></label></div>
+    <div class="filter-group"><strong>马丁排除等级</strong><label v-for="level in ['extreme', 'high', 'medium', 'low']" :key="level" class="check"><input v-model="request.rules.excluded_martingale_levels" type="checkbox" :value="level"> {{ level }}</label></div>
     <label class="check"><input v-model="request.personal_candidate_list" type="checkbox"> 个人候选名单（加入 Abook）</label>
     <div class="platforms"><label v-for="platform in ['mt5', 'hh_mt5']" :key="platform" class="check"><input v-model="request.platforms" :value="platform" type="checkbox"> {{ platform }}</label></div>
     <button class="primary" :disabled="loading || !request.platforms.length" @click="emit('apply')">{{ loading ? '正在计算…' : '应用筛选与验证' }}</button>
-    <div v-if="data.martingale" class="status-box" :class="data.martingale.status === 'ready' ? 'ok' : 'warn'"><strong>马丁过滤：{{ data.martingale.status }}</strong><span>排除 {{ data.martingale.blocked_users ?? 0 }} 人</span></div>
+    <div v-if="data.martingale" class="status-box" :class="data.martingale.status === 'ready' ? 'ok' : 'warn'"><strong>{{ data.martingale.message || `马丁过滤：${data.martingale.status}` }}</strong><span>排除 {{ data.martingale.blocked_users ?? 0 }} 人</span></div>
     <p v-if="rulesDirty" class="hint warning">参数已修改，点击应用后重新计算。</p>
   </aside>
 </template>

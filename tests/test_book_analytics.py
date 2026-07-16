@@ -44,3 +44,40 @@ def test_book_analytics_returns_four_analysis_blocks():
 
     assert set(result) >= {"pnl_structure", "user_structure", "risk_exposure", "routing_quality"}
     assert result["risk_exposure"]["abook"]["hedge_cost_bps"] == 1.0
+
+
+def test_book_analytics_includes_routing_risk_and_distribution_metrics():
+    accounts = [
+        _account(1, "abook_candidate", 20, 100000),
+        _account(2, "bbook_candidate", -20, 50000),
+    ]
+    daily_rows = [
+        {"platform": "mt5", "login": 1, "trade_date": "2026-07-01", "client_net_pnl": 10, "matched_trades": 2},
+        {"platform": "mt5", "login": 1, "trade_date": "2026-07-02", "client_net_pnl": -30, "matched_trades": 2},
+        {"platform": "mt5", "login": 2, "trade_date": "2026-07-01", "client_net_pnl": -5, "matched_trades": 1},
+        {"platform": "mt5", "login": 2, "trade_date": "2026-07-02", "client_net_pnl": 2, "matched_trades": 1},
+    ]
+    turnover_rows = [
+        {"platform": "mt5", "login": 1, "trade_date": "2026-07-01", "turnover": 100, "long_turnover": 60, "short_turnover": 40},
+        {"platform": "mt5", "login": 2, "trade_date": "2026-07-01", "turnover": 80, "long_turnover": 30, "short_turnover": 50},
+    ]
+    symbol_rows = {
+        "population": [{"platform": "mt5", "login": 1, "symbol": "EURUSD", "trade_count": 2, "volume": 3, "market_pnl": 5, "turnover": 100}],
+        "abook": [{"platform": "mt5", "login": 1, "symbol": "EURUSD", "trade_count": 2, "volume": 3, "market_pnl": 5, "turnover": 100}],
+    }
+    context = prepare_analysis_context(
+        [], daily_rows=daily_rows, overview_daily_rows=daily_rows,
+        selection_start="2026-05-01", selection_end="2026-06-30",
+        validation_start="2026-07-01", validation_end="2026-07-13",
+    )
+
+    result = build_book_analytics(
+        context, accounts, {("mt5", 1)}, 1.0, symbol_rows, turnover_rows,
+    )
+
+    assert result["pnl_structure"]["abook"]["max_drawdown"] == 30.0
+    assert "top_5" in result["pnl_structure"]["abook"]["profit_concentration"]
+    assert result["user_structure"]["abook"]["symbol_heatmap"][0]["symbol"] == "EURUSD"
+    assert result["risk_exposure"]["abook"]["daily_turnover"][0]["turnover"] == 100.0
+    assert result["routing_quality"]["daily_hit_curves"]
+    assert result["routing_quality"]["company_profit_comparison"]

@@ -236,6 +236,8 @@ def sweep(request: SweepRequest, repository: ClickHouseRepository = Depends(get_
             request.grid,
             request.objective,
             request.max_misjudge_cost,
+            personal_candidate_logins=set(personal_candidate_logins),
+            martingale_snapshot=martingale_snapshot,
         )
         result["martingale"] = martingale_snapshot.summary(analysis_request.rules.excluded_martingale_levels)
         result["risk_management"] = risk_filter.summary()
@@ -265,15 +267,25 @@ def book_analytics(
             abook_keys = {(item.platform, int(item.login)) for item in request.abook_accounts}
         daily_rows = _fetch_daily_rows(repository, request.analysis)
         symbol_method = getattr(repository, "fetch_book_symbol_rows", None)
-        symbol_rows = symbol_method(request.analysis) if callable(symbol_method) else []
+        turnover_method = getattr(repository, "fetch_daily_turnover_rows", None)
+        symbol_rows = {
+            "population": symbol_method(request.analysis) if callable(symbol_method) else [],
+            "abook": symbol_method(request.analysis, account_keys=abook_keys) if callable(symbol_method) else [],
+        }
+        turnover_rows = {
+            "population": turnover_method(request.analysis) if callable(turnover_method) else [],
+            "abook": turnover_method(request.analysis, account_keys=abook_keys) if callable(turnover_method) else [],
+        }
         context = prepare_analysis_context(
-            [], daily_rows=daily_rows,
+            [], daily_rows=daily_rows, overview_daily_rows=daily_rows,
             selection_start=request.analysis.selection.start.isoformat(),
             selection_end=request.analysis.selection.end.isoformat(),
             validation_start=request.analysis.validation.start.isoformat(),
             validation_end=request.analysis.validation.end.isoformat(),
         )
-        result = build_book_analytics(context, accounts, abook_keys, request.hedge_cost_bps, symbol_rows)
+        result = build_book_analytics(
+            context, accounts, abook_keys, request.hedge_cost_bps, symbol_rows, turnover_rows,
+        )
         result["coverage"] = analysis_payload.get("coverage", {})
         result["book_counts"] = {
             "population": len(accounts),

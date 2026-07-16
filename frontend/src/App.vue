@@ -53,6 +53,11 @@ async function downloadExport() {
 }
 function selectTab(tab: Tab) { activeTab.value = tab; if (tab !== 'overview' && tab !== 'sweep') loadBook() }
 function reset() { request.value.rules = { ...defaultRules }; request.value.personal_candidate_list = false; loadAnalysis() }
+function applySweepRules(rules: Record<string, number | string[]>) {
+  request.value.rules = { ...request.value.rules, ...rules }
+  activeTab.value = 'overview'
+  loadAnalysis()
+}
 watch(() => request.value.rules, () => { rulesDirty.value = true }, { deep: true })
 onMounted(loadAnalysis)
 const tabs: Array<{ id: Tab; label: string }> = [
@@ -68,8 +73,8 @@ const tabs: Array<{ id: Tab; label: string }> = [
       <FilterSidebar :request="request" :data="data" :loading="loading" :rules-dirty="rulesDirty" @apply="loadAnalysis" @reset="reset" />
       <main class="content"><div v-if="error" class="alert error">{{ error }}</div><nav class="tabs"><button v-for="tab in tabs" :key="tab.id" :class="{ active: activeTab === tab.id }" @click="selectTab(tab.id)">{{ tab.label }}</button></nav>
         <template v-if="activeTab === 'overview'"><KpiCards :data="data" /><MisjudgeAnalysis :data="data" /><SelectionFunnel :data="data" /><AccountsTable :accounts="data.accounts || []" @open="selectedAccount = $event" /></template>
-        <template v-else-if="activeTab === 'sweep'"><SweepPanel :request="request" /></template>
-        <template v-else><BookPerformance :analytics="bookData" :loading="bookLoading" /><section v-if="bookData" class="panel detail-panel"><h2>{{ tabs.find(tab => tab.id === activeTab)?.label }}</h2><pre>{{ JSON.stringify(bookData?.[activeTab === 'pnl' ? 'pnl_structure' : activeTab === 'users' ? 'user_structure' : activeTab === 'risk' ? 'risk_exposure' : 'routing_quality'], null, 2) }}</pre></section></template>
+        <template v-else-if="activeTab === 'sweep'"><SweepPanel :request="request" @apply-rules="applySweepRules" /></template>
+        <template v-else><BookPerformance :analytics="bookData" :loading="bookLoading" :active-tab="activeTab" /></template>
       </main>
     </div>
     <AccountDrawer :account="selectedAccount" @close="selectedAccount = null" />
