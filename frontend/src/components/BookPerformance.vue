@@ -57,8 +57,8 @@ function renderPnlCharts(analytics: any) {
     xAxis: { type: 'category', data: dates, axisLabel: { color: '#8497ad' } },
     yAxis: { type: 'value', name: '每日客户 P&L', nameTextStyle: { color: '#8497ad' }, axisLabel: { color: '#8497ad' }, splitLine: { lineStyle: { color: '#20364e' } } },
     series: [
-      { name: 'Abook 每日客户 P&L', type: 'bar', data: dates.map(date => aDaily[date]), itemStyle: { color: '#54d6a6' } },
-      { name: 'Bbook 每日客户 P&L', type: 'bar', data: dates.map(date => bDaily[date]), itemStyle: { color: '#ff8d91' } },
+      { name: 'Abook 每日客户 P&L', type: 'line', smooth: true, data: dates.map(date => aDaily[date]), lineStyle: { color: '#54d6a6' } },
+      { name: 'Bbook 每日客户 P&L', type: 'line', smooth: true, data: dates.map(date => bDaily[date]), lineStyle: { color: '#ff8d91' } },
     ],
   })
 }
