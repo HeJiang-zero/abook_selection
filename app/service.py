@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from calendar import monthrange
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 import math
@@ -12,6 +13,42 @@ from .metrics import calculate_drawdown
 
 ZERO = Decimal("0")
 NEUTRAL_BAND_USD = Decimal("10")
+
+
+@dataclass
+class AnalysisContext:
+    rows: list[dict[str, Any]]
+    daily_rows: list[dict[str, Any]]
+    overview_rows: list[dict[str, Any]]
+    overview_daily_rows: list[dict[str, Any]]
+    selection_start: str
+    selection_end: str
+    validation_start: str
+    validation_end: str
+
+
+def prepare_analysis_context(
+    rows: Iterable[dict[str, Any]],
+    *,
+    daily_rows: Iterable[dict[str, Any]] | None = None,
+    overview_rows: Iterable[dict[str, Any]] | None = None,
+    overview_daily_rows: Iterable[dict[str, Any]] | None = None,
+    selection_start: str,
+    selection_end: str,
+    validation_start: str,
+    validation_end: str,
+) -> AnalysisContext:
+    materialized = list(rows)
+    return AnalysisContext(
+        rows=materialized,
+        daily_rows=list(daily_rows or []),
+        overview_rows=list(overview_rows) if overview_rows is not None else list(materialized),
+        overview_daily_rows=list(overview_daily_rows or []),
+        selection_start=selection_start,
+        selection_end=selection_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+    )
 
 
 def _safe_ratio(numerator: Decimal, denominator: Decimal) -> float:
@@ -640,6 +677,44 @@ def _correlation(pairs: list[tuple[Decimal, Decimal]]) -> float:
     return _ratio(numerator, denominator)
 
 
+def classify_accounts(
+    context: AnalysisContext,
+    rules: Any,
+    personal_candidate_logins: set[int] | None = None,
+    martingale_snapshot: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Classify a materialized context without issuing another data query."""
+    payload = build_two_stage_payload(
+        context.rows,
+        overview_rows=context.overview_rows,
+        daily_rows=context.daily_rows,
+        overview_daily_rows=context.overview_daily_rows,
+        selection_start=context.selection_start,
+        selection_end=context.selection_end,
+        validation_start=context.validation_start,
+        validation_end=context.validation_end,
+        min_trades=rules.min_trades,
+        min_active_days=rules.min_active_days,
+        min_win_rate=rules.min_win_rate,
+        min_profit_factor=rules.min_profit_factor,
+        min_payoff_ratio=rules.min_payoff_ratio,
+        min_avg_daily_profit=rules.min_avg_daily_profit,
+        min_selection_monthly_consistency=rules.min_selection_monthly_consistency,
+        min_positive_month_rate=rules.min_positive_month_rate,
+        max_top1_day_profit_contribution=rules.max_top1_day_profit_contribution,
+        max_peak_leverage_ratio=rules.max_peak_leverage_ratio,
+        max_high_leverage_holding_seconds=rules.max_high_leverage_holding_seconds,
+        min_direction_day_rate_lower_bound=rules.min_direction_day_rate_lower_bound,
+        min_stability_score=rules.min_stability_score,
+        high_confidence_trades=rules.high_confidence_trades,
+        high_confidence_days=rules.high_confidence_days,
+        personal_candidate_logins=personal_candidate_logins,
+        martingale_snapshot=martingale_snapshot,
+        excluded_martingale_levels=rules.excluded_martingale_levels,
+    )
+    return payload["accounts"]
+
+
 def _group_summary(accounts: list[dict[str, Any]], target: Optional[str] = None) -> dict[str, Any]:
     total = len(accounts)
     active = [account for account in accounts if account["validation"]["trade_count"] > 0]
@@ -909,6 +984,8 @@ def build_two_stage_payload(
     high_confidence_days: int = 30,
     personal_candidate_logins: set[int] | None = None,
     personal_candidate_info: dict[str, Any] | None = None,
+    martingale_snapshot: Any | None = None,
+    excluded_martingale_levels: Iterable[str] = ("extreme", "high", "medium"),
 ) -> dict[str, Any]:
     """Build a selection-period cohort and an independent validation-period readout."""
     materialized = list(rows)
@@ -1004,7 +1081,17 @@ def build_two_stage_payload(
         )
         is_personal_candidate = int(identity["login"]) in personal_logins
         rule_deployable = cohort in {"abook_candidate", "bbook_candidate"}
-        if is_personal_candidate:
+        martingale_record = None
+        if martingale_snapshot is not None and getattr(martingale_snapshot, "status", "") == "ready":
+            martingale_record = martingale_snapshot.indexed_records().get(
+                (str(identity["platform"]), int(identity["login"]))
+            )
+        martingale_level = martingale_record.get("risk_level") if martingale_record else None
+        martingale_blocked = martingale_level in set(excluded_martingale_levels)
+        if martingale_blocked:
+            cohort = "bbook_candidate" if directional_cohort == "abook_candidate" else "observation"
+            selection_source = "martingale_blocked"
+        elif is_personal_candidate:
             cohort = "abook_candidate"
             selection_source = (
                 "rule_and_personal_list"
@@ -1028,6 +1115,11 @@ def build_two_stage_payload(
             "deployable": cohort in {"abook_candidate", "bbook_candidate"},
             "is_personal_candidate": is_personal_candidate,
             "selection_source": selection_source,
+            "martingale_blocked": martingale_blocked,
+            "martingale_status": getattr(martingale_snapshot, "status", "not_loaded") if martingale_snapshot is not None else "not_loaded",
+            "martingale_risk_level": martingale_level,
+            "martingale_layer_hits": dict(martingale_record.get("layer_hits", {})) if martingale_record else {},
+            "martingale_record": dict(martingale_record) if martingale_record else None,
             "validation_status": validation_status,
             "transition_status": _transition(cohort, validation_status),
             "selection": selection,

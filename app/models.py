@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -44,6 +44,9 @@ class AnalysisRules(BaseModel):
     min_stability_score: float = Field(default=70.0, ge=0, le=100)
     high_confidence_trades: int = Field(default=100, ge=0)
     high_confidence_days: int = Field(default=30, ge=0)
+    excluded_martingale_levels: List[Literal["extreme", "high", "medium", "low"]] = Field(
+        default_factory=lambda: ["extreme", "high", "medium"]
+    )
 
 
 class AnalysisRequest(BaseModel):
@@ -91,3 +94,27 @@ class AnalysisRequest(BaseModel):
 class FilterOptions(BaseModel):
     platforms: List[str]
     groups: List[str]
+
+
+class AccountKey(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    platform: str
+    login: int = Field(ge=0)
+
+
+class SweepRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    analysis: AnalysisRequest
+    grid: dict[str, list[Any]]
+    objective: Literal["validation_increment", "increment_with_cost_cap", "validation_precision"]
+    max_misjudge_cost: Optional[float] = Field(default=None, ge=0)
+
+
+class BookAnalyticsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    analysis: AnalysisRequest
+    abook_accounts: List[AccountKey] = Field(default_factory=list)
+    hedge_cost_bps: float = Field(default=0.0, ge=0, le=5)
