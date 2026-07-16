@@ -77,6 +77,10 @@ cd /Users/jianghe/abook_hedging && ./run_dashboard.sh
 
 当前 Abook 利润影响是理论估算：假设进入 Abook 后交易所的对手盘利润为 0，因此迁移增量为用户净交易 P&L；不包含真实外部成交、点差、对冲成本、滑点和流动性成本。
 
+页面的符号口径固定为：customer_net_pnl 是客户净交易 P&L，不代表公司利润；留在 Bbook 时公司利润为客户净交易 P&L 取负；Abook 用户的正负只用于命中、误判和样本外验证，Abook 实际公司利润在没有外部成交数据时显示为理论 0。Abook 候选的“公司增量”是把该用户从 Bbook 移到 Abook 的理论变化，验证期还可以再扣除对冲成本。Bbook “漏网”只统计被判为 bbook_candidate 但验证期转正的用户，不把 observation 控制组混入误判金额。
+
+volume 沿用 dwd_matched_trades.volume 原始单位；不同品种可能有不同交易量精度（例如外汇数据可出现 1000），不能直接当作统一“手数”。turnover 是交易名义金额风险代理，也不是公司利润，页面单独标注。
+
 ## 本地风险快照
 
 杠杆筛选不在每次页面请求中重新聚合。使用以下命令按筛选期生成本地快照：

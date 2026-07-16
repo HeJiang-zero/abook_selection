@@ -433,6 +433,14 @@ def _period_months(start: str, end: str) -> list[str]:
     return result
 
 
+def _rows_for_phase(rows: list[dict[str, Any]], phase: str, months: list[str]) -> list[dict[str, Any]]:
+    """Select exact phase rows when the query provides them; retain legacy fallback."""
+    tagged = [row for row in rows if row.get("phase") in {"selection", "validation"}]
+    if tagged:
+        return [row for row in tagged if row.get("phase") == phase]
+    return [row for row in rows if _month(row["month_start"]) in months]
+
+
 def _account_period_metrics(
     rows: list[dict[str, Any]], account: dict[str, Any], phase: str | None = None
 ) -> dict[str, Any]:
@@ -743,6 +751,8 @@ def _group_summary(accounts: list[dict[str, Any]], target: Optional[str] = None)
         "active_accounts": len(active),
         "active_rate": _safe_ratio(Decimal(len(active)), Decimal(total)),
         "client_net_pnl": float(client_net_pnl),
+        "customer_net_pnl": float(client_net_pnl),
+        "bbook_company_profit": float(-client_net_pnl),
         "market_pnl": float(market_pnl),
         "theoretical_mirror_pnl": float(-market_pnl),
         "costs": float(costs),
@@ -773,9 +783,9 @@ def _group_summary(accounts: list[dict[str, Any]], target: Optional[str] = None)
         "profit_factor": _profit_factor(gross_wins, gross_losses),
         "total_volume": sum(account["validation"]["total_volume"] for account in accounts),
         "turnover": sum(account["validation"]["turnover"] for account in accounts),
-        "max_drawdown": float(calculate_drawdown(
-            [Decimal(str(account["validation"]["client_net_pnl"])) for account in accounts]
-        )),
+        # Account ordering is not a time series. The group drawdown is filled
+        # from account-day rows by build_two_stage_payload below.
+        "max_drawdown": 0.0,
         "target_successes": target_successes,
         "target_total": target_total,
         "precision": _safe_ratio(Decimal(target_successes), Decimal(target_total)) if target else 0.0,
@@ -784,6 +794,38 @@ def _group_summary(accounts: list[dict[str, Any]], target: Optional[str] = None)
         "lift": 0.0,
         "sample_warning": len(active) < 30,
     }
+
+
+def _cumulative_series(values: Iterable[Decimal]) -> list[Decimal]:
+    running = ZERO
+    result = []
+    for value in values:
+        running += _finite_decimal(value)
+        result.append(running)
+    return result
+
+
+def _daily_group_drawdown(
+    accounts: list[dict[str, Any]],
+    daily_rows: Iterable[dict[str, Any]],
+    validation_start: str,
+    validation_end: str,
+) -> Decimal:
+    keys = {(str(account["platform"]), int(account["login"])) for account in accounts}
+    start = date.fromisoformat(validation_start)
+    end = date.fromisoformat(validation_end)
+    by_day: defaultdict[date, Decimal] = defaultdict(lambda: ZERO)
+    for row in daily_rows:
+        key = (str(row.get("platform")), int(row.get("login", 0)))
+        if key not in keys:
+            continue
+        value = row.get("trade_date")
+        row_day = value.date() if isinstance(value, datetime) else value
+        if isinstance(row_day, str):
+            row_day = date.fromisoformat(row_day[:10])
+        if row_day is not None and start <= row_day <= end:
+            by_day[row_day] += _finite_decimal(row.get("client_net_pnl"))
+    return calculate_drawdown(_cumulative_series(by_day[day] for day in sorted(by_day)))
 
 
 def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -801,9 +843,17 @@ def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
             "martingale_risk_level": account.get("martingale_risk_level"),
         }
         if account.get("cohort") == "abook_candidate" and validation_pnl < 0:
-            abook_losses.append({**item, "loss_amount": round(-validation_pnl, 6)})
-        elif account.get("cohort") != "abook_candidate" and validation_pnl > 0:
-            bbook_profitable.append({**item, "profit_amount": round(validation_pnl, 6)})
+            abook_losses.append({
+                **item,
+                "loss_amount": round(-validation_pnl, 6),
+                "company_increment_if_routed": round(validation_pnl, 6),
+            })
+        elif account.get("cohort") == "bbook_candidate" and validation_pnl > 0:
+            bbook_profitable.append({
+                **item,
+                "profit_amount": round(validation_pnl, 6),
+                "company_loss_if_left_bbook": round(-validation_pnl, 6),
+            })
     abook_losses.sort(key=lambda row: row["loss_amount"], reverse=True)
     bbook_profitable.sort(key=lambda row: row["profit_amount"], reverse=True)
     return {
@@ -811,6 +861,7 @@ def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
         "abook_loss_total": round(sum(row["loss_amount"] for row in abook_losses), 6),
         "bbook_profitable": bbook_profitable,
         "bbook_profitable_total": round(sum(row["profit_amount"] for row in bbook_profitable), 6),
+        "bbook_company_loss_total": round(-sum(row["profit_amount"] for row in bbook_profitable), 6),
     }
 
 
@@ -909,7 +960,7 @@ def _book_split_summary(accounts: list[dict[str, Any]], *, abook: bool) -> dict[
     }
 
 
-def _book_performance(accounts: list[dict[str, Any]], phase: str) -> dict[str, Any]:
+def _book_performance(accounts: list[dict[str, Any]], phase: str, book: str) -> dict[str, Any]:
     values = [_finite_decimal(account[phase].get("client_net_pnl")) for account in accounts]
     neutral = NEUTRAL_BAND_USD
     profitable = [value for value in values if value > neutral]
@@ -918,6 +969,7 @@ def _book_performance(accounts: list[dict[str, Any]], phase: str) -> dict[str, A
     net_pnl = sum(values, ZERO)
     current_bbook_profit = -net_pnl
     assumed_abook_profit = ZERO
+    company_profit_if_current_book = ZERO if book == "abook" else current_bbook_profit
     return {
         "accounts": len(values),
         "profitable_accounts": len(profitable),
@@ -928,9 +980,13 @@ def _book_performance(accounts: list[dict[str, Any]], phase: str) -> dict[str, A
         "gross_profit": float(sum((_finite_decimal(account[phase].get("gross_wins")) for account in accounts), ZERO)),
         "gross_loss": float(sum((_finite_decimal(account[phase].get("gross_losses")) for account in accounts), ZERO)),
         "net_pnl": float(net_pnl),
+        "customer_net_pnl": float(net_pnl),
         "current_bbook_profit": float(current_bbook_profit),
         "assumed_abook_profit": float(assumed_abook_profit),
         "theoretical_increment": float(assumed_abook_profit - current_bbook_profit),
+        "company_profit_if_current_book": float(company_profit_if_current_book),
+        "company_profit_if_bbook": float(current_bbook_profit),
+        "theoretical_company_increment_if_routed_abook": float(net_pnl),
     }
 
 
@@ -1076,8 +1132,8 @@ def build_two_stage_payload(
             "login": int(first["login"]),
             "account_group": first.get("account_group", ""),
         }
-        selection_rows = [row for row in account_rows if _month(row["month_start"]) in selection_months]
-        validation_rows = [row for row in account_rows if _month(row["month_start"]) in validation_months]
+        selection_rows = _rows_for_phase(account_rows, "selection", selection_months)
+        validation_rows = _rows_for_phase(account_rows, "validation", validation_months)
         selection_rows = selection_rows or [_empty_period_row(identity, month) for month in selection_months]
         validation_rows = validation_rows or [_empty_period_row(identity, month) for month in validation_months]
         selection = _account_period_metrics(selection_rows, identity, phase="selection")
@@ -1160,10 +1216,12 @@ def build_two_stage_payload(
         validation_status = _status(
             validation["client_net_pnl"], validation["trade_count"]
         )
+        has_phase_rows = any(row.get("phase") in {"selection", "validation"} for row in account_rows)
         has_nonzero_pnl = any(
-            _month(row["month_start"]) in all_months
-            and abs(_decimal(row.get("client_net_pnl"))) > ZERO
+            abs(_decimal(row.get("client_net_pnl"))) > ZERO
             for row in account_rows
+            if (has_phase_rows and row.get("phase") in {"selection", "validation"})
+            or (not has_phase_rows and _month(row["month_start"]) in all_months)
         )
         account = {
             **identity,
@@ -1288,6 +1346,11 @@ def build_two_stage_payload(
         control_rate = _safe_ratio(Decimal(control_successes), Decimal(len(control_accounts)))
         summary["lift"] = _safe_ratio(Decimal(summary["precision"]), Decimal(str(control_rate))) if control_rate else 0.0
 
+    for cohort, summary in validation_groups.items():
+        summary["max_drawdown"] = float(_daily_group_drawdown(
+            by_cohort[cohort], daily_rows or [], validation_start, validation_end,
+        ))
+
     validation_pairs = [
         (
             Decimal(str(account["selection"]["client_net_pnl"])),
@@ -1331,9 +1394,15 @@ def build_two_stage_payload(
             "current_bbook_net_pnl": float(-selection_net),
             "after_abook_assumed_pnl": 0.0,
             "incremental_change": float(selection_net),
+            "selection_customer_net_pnl": float(selection_net),
+            "selection_bbook_company_profit": float(-selection_net),
+            "selection_company_increment_if_routed_abook": float(selection_net),
             "validation_market_pnl": float(validation_market),
             "validation_client_net_pnl": float(validation_net),
             "validation_incremental_change": float(validation_net),
+            "validation_customer_net_pnl": float(validation_net),
+            "validation_bbook_company_profit": float(-validation_net),
+            "validation_company_increment_if_routed_abook": float(validation_net),
             "is_theoretical": True,
         }
 
@@ -1344,7 +1413,11 @@ def build_two_stage_payload(
             month_rows = []
             for account in cohort_accounts:
                 source_rows = grouped[(account["platform"], account["login"])]
-                matching = [row for row in source_rows if _month(row["month_start"]) == month]
+                matching = [
+                    row for row in source_rows
+                    if _month(row["month_start"]) == month
+                    and (row.get("phase") not in {"selection", "validation"} or row.get("phase") == phase)
+                ]
                 month_rows.extend(matching or [_empty_period_row(account, month)])
             month_metrics = _account_period_metrics(month_rows, cohort_accounts[0] if cohort_accounts else {"platform": "", "login": 0, "account_group": ""}, phase=phase)
             monthly_series.append({
@@ -1366,6 +1439,7 @@ def build_two_stage_payload(
         month_rows = [
             row for row in overview_materialized
             if _month(row["month_start"]) == month
+            and (row.get("phase") not in {"selection", "validation"} or row.get("phase") == ("selection" if month in selection_months else "validation"))
         ]
         active_logins = {
             (row["platform"], int(row["login"]))
@@ -1399,12 +1473,12 @@ def build_two_stage_payload(
     display_bbook_accounts = by_cohort["bbook_candidate"] + by_cohort["observation"]
     book_performance = {
         "selection": {
-            "abook": _book_performance(by_cohort["abook_candidate"], "selection"),
-            "bbook": _book_performance(display_bbook_accounts, "selection"),
+            "abook": _book_performance(by_cohort["abook_candidate"], "selection", "abook"),
+            "bbook": _book_performance(display_bbook_accounts, "selection", "bbook"),
         },
         "validation": {
-            "abook": _book_performance(by_cohort["abook_candidate"], "validation"),
-            "bbook": _book_performance(display_bbook_accounts, "validation"),
+            "abook": _book_performance(by_cohort["abook_candidate"], "validation", "abook"),
+            "bbook": _book_performance(display_bbook_accounts, "validation", "bbook"),
         },
         "definition": "Abook theoretical increment = assumed Abook profit - current Bbook profit; displayed Bbook includes Bbook Core and observation accounts; assumed Abook profit is 0 until external execution data is available.",
     }

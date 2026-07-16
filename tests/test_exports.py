@@ -27,6 +27,15 @@ def test_misjudge_cost_is_sum_of_validation_losses_only():
     assert [row["login"] for row in summary["bbook_profitable"]] == [3]
 
 
+def test_observation_accounts_are_not_called_bbook_misjudges():
+    account = _account(4, "observation", 0, 100)
+
+    summary = build_misjudge_summary([account])
+
+    assert summary["bbook_profitable"] == []
+    assert summary["bbook_company_loss_total"] == 0.0
+
+
 def test_funnel_reports_ordered_stages_and_drop_reasons():
     accounts = [_account(1, "abook_candidate", 50, 10), _account(2, "observation", 0, 0)]
     accounts[1]["selection"]["trade_count"] = 0

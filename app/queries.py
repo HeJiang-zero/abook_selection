@@ -79,18 +79,32 @@ WITH users AS (
     FROM risk.ods_mt5_users FINAL
     WHERE {user_where}
     GROUP BY platform, login
-), months AS (
-    SELECT addMonths(toStartOfMonth(toDate({{start:Date}})), number) AS month_start
-    FROM numbers(36)
-    WHERE number <= dateDiff(
+), periods AS (
+    SELECT
+        'selection' AS phase,
+        toDate({{selection_start:Date}}) AS period_start,
+        toDate({{selection_end_exclusive:Date}}) AS period_end
+    UNION ALL
+    SELECT
+        'validation' AS phase,
+        toDate({{validation_start:Date}}) AS period_start,
+        toDate({{validation_end_exclusive:Date}}) AS period_end
+), period_months AS (
+    SELECT
+        phase,
+        addMonths(toStartOfMonth(period_start), n.number) AS month_start
+    FROM periods
+    CROSS JOIN numbers(36) AS n
+    WHERE n.number <= dateDiff(
         'month',
-        toStartOfMonth(toDate({{start:Date}})),
-        toStartOfMonth(toDate({{end_exclusive:Date}}) - toIntervalDay(1))
+        toStartOfMonth(period_start),
+        toStartOfMonth(period_end - toIntervalDay(1))
     )
 ), matched AS (
     SELECT
-        platform,
-        login,
+        mt.platform AS platform,
+        mt.login AS login,
+        period.phase AS phase,
         toStartOfMonth(exit_time) AS month_start,
         count() AS matched_trades,
         countIf(profit > 0) AS winning_trades,
@@ -108,14 +122,18 @@ WITH users AS (
     FROM risk.dwd_matched_trades AS mt FINAL
     INNER JOIN users AS u
         ON mt.platform = u.platform AND mt.login = u.login
+    CROSS JOIN periods AS period
     WHERE mt.platform IN {{platforms:Array(String)}}
       AND mt.exit_time >= {{start:Date}}
       AND mt.exit_time < {{end_exclusive:Date}}
-    GROUP BY platform, login, month_start
+      AND mt.exit_time >= period.period_start
+      AND mt.exit_time < period.period_end
+    GROUP BY mt.platform, mt.login, period.phase, month_start
 ), deal_daily AS (
     SELECT
-        platform,
-        login,
+        d.platform AS platform,
+        d.login AS login,
+        period.phase AS phase,
         toDate(time) AS trade_date,
         toStartOfMonth(time) AS month_start,
         countIf(action IN (0, 1)) AS trade_rows,
@@ -128,15 +146,19 @@ WITH users AS (
     FROM risk.ods_mt5_deals AS d FINAL
     INNER JOIN users AS u
         ON d.platform = u.platform AND d.login = u.login
+    CROSS JOIN periods AS period
     WHERE d.is_deleted = 0
       AND d.platform IN {{platforms:Array(String)}}
       AND d.time >= {{start:Date}}
       AND d.time < {{end_exclusive:Date}}
-    GROUP BY platform, login, trade_date, month_start
+      AND d.time >= period.period_start
+      AND d.time < period.period_end
+    GROUP BY d.platform, d.login, period.phase, trade_date, month_start
 ), deal_costs AS (
     SELECT
         platform,
         login,
+        phase,
         month_start,
         sum(daily_deal_market_pnl) AS deal_market_pnl,
         sum(daily_gross_wins) AS gross_wins,
@@ -150,11 +172,12 @@ WITH users AS (
         countIf(trade_rows > 0 AND daily_client_net_pnl < 0) AS negative_profit_days,
         countIf(trade_rows > 0 AND daily_client_net_pnl = 0) AS flat_profit_days
     FROM deal_daily
-    GROUP BY platform, login, month_start
+    GROUP BY platform, login, phase, month_start
 ), account_daily AS (
     SELECT
         platform,
         login,
+        phase,
         month_start,
         countIf(trade_rows > 0) AS daily_active_days,
         countIf(trade_rows > 0 AND daily_client_net_pnl > 0) AS daily_positive_days,
@@ -169,15 +192,16 @@ WITH users AS (
         countIf(trade_rows > 0) AS daily_variance_count,
         sumIf(abs(daily_client_net_pnl), trade_rows > 0) AS daily_abs_sum
     FROM deal_daily
-    GROUP BY platform, login, month_start
+    GROUP BY platform, login, phase, month_start
 ), account_months AS (
     SELECT
         u.platform,
         u.login,
         u.account_group,
-        m.month_start
+        pm.phase,
+        pm.month_start
     FROM users AS u
-    CROSS JOIN months AS m
+    CROSS JOIN period_months AS pm
 ), population AS (
     SELECT
         uniqExact(tuple(platform, login)) AS unique_account_count,
@@ -222,6 +246,7 @@ SELECT
     k.platform AS platform,
     k.login AS login,
     k.account_group AS account_group,
+    k.phase AS phase,
     k.month_start AS month_start,
     p.unique_account_count AS population_unique_accounts,
     p.account_row_count AS population_account_rows,
@@ -276,11 +301,11 @@ CROSS JOIN population AS p
 CROSS JOIN trade_source_coverage AS ts
 CROSS JOIN deal_source_coverage AS ds
 LEFT JOIN matched AS m
-    ON k.platform = m.platform AND k.login = m.login AND k.month_start = m.month_start
+    ON k.platform = m.platform AND k.login = m.login AND k.phase = m.phase AND k.month_start = m.month_start
 LEFT JOIN deal_costs AS d
-    ON k.platform = d.platform AND k.login = d.login AND k.month_start = d.month_start
+    ON k.platform = d.platform AND k.login = d.login AND k.phase = d.phase AND k.month_start = d.month_start
 LEFT JOIN account_daily AS a
-    ON k.platform = a.platform AND k.login = a.login AND k.month_start = a.month_start
+    ON k.platform = a.platform AND k.login = a.login AND k.phase = a.phase AND k.month_start = a.month_start
 LEFT JOIN period_matched_stats AS period_stats
     ON k.platform = period_stats.platform AND k.login = period_stats.login
 ORDER BY k.platform, k.login, k.month_start

@@ -75,7 +75,7 @@ def test_analysis_query_builds_full_months_and_excludes_test_accounts():
 
     assert "positionCaseInsensitive(`group`, 'test') = 0" in query
     assert "positionCaseInsensitive(`group`, 'demo') = 0" in query
-    assert "CROSS JOIN months" in query
+    assert "period_months AS" in query
     assert "positive_profit_days" in query
     assert "uniqExact(tuple(platform, login)) AS unique_account_count" in query
     assert "population_unique_accounts" in query
@@ -144,6 +144,22 @@ def test_daily_pnl_query_aggregates_utc_deals_and_reuses_account_boundaries():
     assert "has({login_0:Array(UInt64)}, login)" in query
     assert params["start"] == "2026-05-01"
     assert params["end_exclusive"] == "2026-07-14"
+
+
+def test_analysis_query_preserves_exact_selection_and_validation_phase_grain():
+    query, params = build_analysis_query(
+        platforms=["mt5"], start="2026-06-01", end="2026-06-30",
+        lookback_months=1, filters={},
+        selection_start="2026-06-01", selection_end="2026-06-15",
+        validation_start="2026-06-16", validation_end="2026-06-30",
+    )
+
+    assert "periods AS" in query
+    assert "period_months AS" in query
+    assert "period.phase AS phase" in query
+    assert "k.phase = m.phase" in query
+    assert params["selection_start"] == "2026-06-01"
+    assert params["validation_start"] == "2026-06-16"
 
 
 def test_daily_pnl_query_uses_clickhouse_identifier_quoting_without_backslashes():

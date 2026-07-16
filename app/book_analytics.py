@@ -72,7 +72,7 @@ def _concentration(values: list[float]) -> dict[str, dict[str, float]]:
     return result
 
 
-def _phase_metrics(accounts: list[dict[str, Any]], phase: str) -> dict[str, Any]:
+def _phase_metrics(accounts: list[dict[str, Any]], phase: str, book: str) -> dict[str, Any]:
     values = [float(account.get(phase, {}).get("client_net_pnl", 0.0)) for account in accounts]
     positive = [value for value in values if value > 0]
     negative = [value for value in values if value < 0]
@@ -82,10 +82,15 @@ def _phase_metrics(accounts: list[dict[str, Any]], phase: str) -> dict[str, Any]
         for account in accounts
         if account.get(phase, {}).get("profit_factor") is not None
     ]
+    customer_net_pnl = round(sum(values), 6)
     return {
         "accounts": len(accounts),
         "active_accounts": sum(1 for account in accounts if account.get(phase, {}).get("trade_count", 0) > 0),
-        "total_client_net_pnl": round(sum(values), 6),
+        "total_client_net_pnl": customer_net_pnl,
+        "customer_net_pnl": customer_net_pnl,
+        "bbook_company_profit": round(-customer_net_pnl, 6),
+        "company_profit_if_current_book": 0.0 if book == "abook" else round(-customer_net_pnl, 6),
+        "theoretical_company_increment_if_routed_abook": customer_net_pnl if book == "abook" else 0.0,
         "profitable_accounts": len(positive),
         "loss_accounts": len(negative),
         "pnl_distribution": values,
@@ -126,6 +131,7 @@ def _daily_series(context: AnalysisContext, accounts: list[dict[str, Any]], labe
             continue
         grouped[_row_date(row)] += float(row.get("client_net_pnl", 0) or 0)
     running = 0.0
+    company_running = 0.0
     result = []
     for day in sorted(grouped):
         running += grouped[day]
@@ -134,7 +140,18 @@ def _daily_series(context: AnalysisContext, accounts: list[dict[str, Any]], labe
         validation_start = date.fromisoformat(context.validation_start)
         validation_end = date.fromisoformat(context.validation_end)
         phase = "selection" if selection_start <= day <= selection_end else "validation" if validation_start <= day <= validation_end else "other"
-        result.append({"date": day.isoformat(), "phase": phase, "pnl": round(grouped[day], 6), "cumulative_pnl": round(running, 6), "book": label})
+        company_pnl = 0.0 if label == "abook" else -grouped[day]
+        company_running += company_pnl
+        result.append({
+            "date": day.isoformat(),
+            "phase": phase,
+            "pnl": round(grouped[day], 6),
+            "customer_pnl": round(grouped[day], 6),
+            "cumulative_pnl": round(running, 6),
+            "company_pnl": round(company_pnl, 6),
+            "company_cumulative_pnl": round(company_running, 6),
+            "book": label,
+        })
     return result
 
 
@@ -290,8 +307,8 @@ def build_book_analytics(
     for book, items in books.items():
         validation_series = [row["pnl"] for row in daily_series[book] if row["date"] >= context.validation_start and row["date"] <= context.validation_end]
         pnl_structure[book] = {
-            "selection": _phase_metrics(items, "selection"),
-            "validation": _phase_metrics(items, "validation"),
+            "selection": _phase_metrics(items, "selection", book),
+            "validation": _phase_metrics(items, "validation", book),
             "daily_series": daily_series[book],
             "max_drawdown": _drawdown(validation_series),
             "profit_concentration": _concentration([float(account.get("validation", {}).get("client_net_pnl", 0.0)) for account in items]),

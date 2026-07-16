@@ -81,3 +81,23 @@ def test_book_analytics_includes_routing_risk_and_distribution_metrics():
     assert result["risk_exposure"]["abook"]["daily_turnover"][0]["turnover"] == 100.0
     assert result["routing_quality"]["daily_hit_curves"]
     assert result["routing_quality"]["company_profit_comparison"]
+
+
+def test_book_analytics_separates_customer_pnl_from_company_profit_sign():
+    accounts = [
+        _account(1, "abook_candidate", 20, 100000),
+        _account(2, "bbook_candidate", -20, 50000),
+    ]
+    context = prepare_analysis_context(
+        [], selection_start="2026-05-01", selection_end="2026-06-30",
+        validation_start="2026-07-01", validation_end="2026-07-13",
+    )
+
+    result = build_book_analytics(context, accounts, {("mt5", 1)}, 0.0, [])
+    abook_validation = result["pnl_structure"]["abook"]["validation"]
+    bbook_validation = result["pnl_structure"]["bbook"]["validation"]
+
+    assert abook_validation["customer_net_pnl"] == 20.0
+    assert abook_validation["company_profit_if_current_book"] == 0.0
+    assert bbook_validation["customer_net_pnl"] == -20.0
+    assert bbook_validation["company_profit_if_current_book"] == 20.0

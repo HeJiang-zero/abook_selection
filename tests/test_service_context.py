@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from app.martingale import load_martingale_snapshot
 from app.models import AnalysisRules
-from app.service import classify_accounts, prepare_analysis_context
+from app.service import _daily_group_drawdown, build_two_stage_payload, classify_accounts, prepare_analysis_context
 
 
 def _row(month: str, pnl: int) -> dict:
@@ -83,3 +83,33 @@ def test_martingale_block_wins_over_personal_candidate_override(tmp_path):
 
     assert account["cohort"] != "abook_candidate"
     assert account["selection_source"] == "martingale_blocked"
+
+
+def test_phase_tagged_same_month_rows_are_not_counted_in_both_periods():
+    selection_row = _row("2026-06-01", 120)
+    selection_row["phase"] = "selection"
+    validation_row = _row("2026-06-01", -80)
+    validation_row["phase"] = "validation"
+
+    payload = build_two_stage_payload(
+        [selection_row, validation_row],
+        selection_start="2026-06-01",
+        selection_end="2026-06-15",
+        validation_start="2026-06-16",
+        validation_end="2026-06-30",
+    )
+
+    account = payload["accounts"][0]
+    assert account["selection"]["client_net_pnl"] == 120.0
+    assert account["validation"]["client_net_pnl"] == -80.0
+
+
+def test_group_drawdown_uses_chronological_account_day_rows():
+    accounts = [{"platform": "mt5", "login": 1}, {"platform": "mt5", "login": 2}, {"platform": "mt5", "login": 3}]
+    daily_rows = [
+        {"platform": "mt5", "login": 1, "trade_date": "2026-07-01", "client_net_pnl": -50},
+        {"platform": "mt5", "login": 2, "trade_date": "2026-07-02", "client_net_pnl": 100},
+        {"platform": "mt5", "login": 3, "trade_date": "2026-07-03", "client_net_pnl": -50},
+    ]
+
+    assert _daily_group_drawdown(accounts, daily_rows, "2026-07-01", "2026-07-13") == 50
