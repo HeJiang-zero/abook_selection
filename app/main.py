@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Body, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .martingale import build_martingale_filter, load_martingale_snapshot, snapshot_path
+from .exports import render_abook_csv
 from .models import AnalysisRequest, FilterOptions, SweepRequest
 from .personal_candidates import load_personal_candidates
 from .repository import ClickHouseRepository, RepositoryConfigurationError
@@ -243,6 +245,32 @@ def sweep(request: SweepRequest, repository: ClickHouseRepository = Depends(get_
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="ClickHouse sweep query failed") from exc
+
+
+def _export_response(request: AnalysisRequest, repository: ClickHouseRepository) -> StreamingResponse:
+    payload = analysis(request, repository)
+    content = render_abook_csv(payload.get("accounts", []))
+    return StreamingResponse(
+        iter([content]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=abook_accounts.csv"},
+    )
+
+
+@app.get("/api/abook/export")
+def export(
+    request: Optional[AnalysisRequest] = Body(default=None),
+    repository: ClickHouseRepository = Depends(get_repository),
+) -> StreamingResponse:
+    return _export_response(request or AnalysisRequest(), repository)
+
+
+@app.post("/api/abook/export")
+def export_post(
+    request: AnalysisRequest,
+    repository: ClickHouseRepository = Depends(get_repository),
+) -> StreamingResponse:
+    return _export_response(request, repository)
 
 
 if STATIC_DIR.exists():

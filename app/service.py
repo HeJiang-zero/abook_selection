@@ -786,6 +786,63 @@ def _group_summary(accounts: list[dict[str, Any]], target: Optional[str] = None)
     }
 
 
+def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
+    abook_losses = []
+    bbook_profitable = []
+    for account in accounts:
+        validation_pnl = float(account.get("validation", {}).get("client_net_pnl", account.get("validation_client_net_pnl", 0.0)))
+        item = {
+            "platform": account["platform"],
+            "login": int(account["login"]),
+            "account_group": account.get("account_group", ""),
+            "validation_client_net_pnl": validation_pnl,
+            "selection_source": account.get("selection_source", ""),
+            "selection_flags": list(account.get("selection_flags", [])),
+            "martingale_risk_level": account.get("martingale_risk_level"),
+        }
+        if account.get("cohort") == "abook_candidate" and validation_pnl < 0:
+            abook_losses.append({**item, "loss_amount": round(-validation_pnl, 6)})
+        elif account.get("cohort") != "abook_candidate" and validation_pnl > 0:
+            bbook_profitable.append({**item, "profit_amount": round(validation_pnl, 6)})
+    abook_losses.sort(key=lambda row: row["loss_amount"], reverse=True)
+    bbook_profitable.sort(key=lambda row: row["profit_amount"], reverse=True)
+    return {
+        "abook_losses": abook_losses,
+        "abook_loss_total": round(sum(row["loss_amount"] for row in abook_losses), 6),
+        "bbook_profitable": bbook_profitable,
+        "bbook_profitable_total": round(sum(row["profit_amount"] for row in bbook_profitable), 6),
+    }
+
+
+def build_selection_funnel(accounts: list[dict[str, Any]], eligible_accounts: int | None = None) -> dict[str, Any]:
+    all_accounts = list(accounts)
+    stages = [
+        ("eligible", lambda account: True, "not_in_query_population"),
+        (
+            "sample_qualified",
+            lambda account: account.get("selection", {}).get("trade_count", 0) > 0
+            and account.get("selection", {}).get("active_trade_days", 0) > 0,
+            "insufficient_sample",
+        ),
+        ("directional", lambda account: account.get("base_cohort") in {"abook_candidate", "bbook_candidate"}, "no_direction"),
+        ("stability_core", lambda account: account.get("stability", {}).get("tier") == "core", "stability_watch"),
+        ("leverage_passed", lambda account: "leverage_ratio" not in account.get("selection_flags", []), "leverage_ratio"),
+        ("non_martingale", lambda account: not account.get("martingale_blocked", False), "martingale_blocked"),
+        ("abook_core", lambda account: account.get("cohort") == "abook_candidate", "not_abook_candidate"),
+    ]
+    prior = all_accounts
+    output = []
+    for index, (name, predicate, reason) in enumerate(stages):
+        members = [account for account in prior if predicate(account)] if index else all_accounts
+        dropped = {}
+        for account in prior:
+            if account not in members:
+                dropped[reason] = dropped.get(reason, 0) + 1
+        output.append({"name": name, "count": len(members) if index else (eligible_accounts if eligible_accounts is not None else len(members)), "drop_reasons": dropped})
+        prior = members
+    return {"stages": output, "definition": "Each stage is evaluated against the accounts surviving the previous stage."}
+
+
 def _status(value: float, trade_count: int) -> str:
     if trade_count <= 0:
         return "inactive"
@@ -1380,6 +1437,21 @@ def build_two_stage_payload(
             partial_months.add(source_max[:7])
     if validation_end_date.day < monthrange(validation_end_date.year, validation_end_date.month)[1]:
         partial_months.add(validation_end[:7])
+    misjudge_summary = build_misjudge_summary(accounts)
+    funnel = build_selection_funnel(accounts, unique_accounts)
+    without_personal_count = sum(
+        1 for account in accounts
+        if account.get("base_cohort") == "abook_candidate"
+        and account.get("stability", {}).get("tier") == "core"
+        and not account.get("martingale_blocked", False)
+    )
+    personal_candidate_impact = {
+        "enabled": bool(personal_info.get("enabled")),
+        "with_list_abook_accounts": len(by_cohort["abook_candidate"]),
+        "without_list_abook_accounts": without_personal_count,
+        "abook_account_delta": len(by_cohort["abook_candidate"]) - without_personal_count,
+        "definition": "Without-list count is the same in-memory cohort with personal overrides removed; validation impact is recomputed by sweep when exact comparison is needed.",
+    }
     return {
         "coverage": {
             "selection_start": selection_start,
@@ -1417,6 +1489,7 @@ def build_two_stage_payload(
             "min_stability_score": min_stability_score,
             "high_confidence_trades": high_confidence_trades,
             "high_confidence_days": high_confidence_days,
+            "excluded_martingale_levels": list(excluded_martingale_levels),
             "test_accounts_excluded": True,
             "excluded_account_group_tokens": ["test", "demo"],
         },
@@ -1437,5 +1510,8 @@ def build_two_stage_payload(
         "book_performance": book_performance,
         "daily_book_series": daily_book_series,
         "monthly_series": monthly_series,
+        "misjudge": misjudge_summary,
+        "funnel": funnel,
+        "personal_candidate_impact": personal_candidate_impact,
         "accounts": [account for account in accounts if account["has_nonzero_pnl"]],
     }
