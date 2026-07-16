@@ -388,3 +388,68 @@ def build_account_detail_query(platform: str, login: int, start: str, end: str) 
         "start": start,
         "end_exclusive": _date_end_exclusive(end),
     }
+
+
+def _book_key_predicate(account_keys: set[tuple[str, int]] | None) -> str:
+    if not account_keys:
+        return ""
+    by_platform: dict[str, list[int]] = {}
+    for platform, login in sorted(account_keys):
+        if platform in ALLOWED_PLATFORMS:
+            by_platform.setdefault(platform, []).append(int(login))
+    if not by_platform:
+        return " AND 0"
+    predicates = [
+        f"(m.platform = '{platform}' AND m.login IN ({','.join(str(login) for login in logins)}))"
+        for platform, logins in sorted(by_platform.items())
+    ]
+    return " AND (" + " OR ".join(predicates) + ")"
+
+
+def build_book_symbol_query(
+    *, platforms: list[str], start: str, end: str, account_keys: set[tuple[str, int]] | None = None
+) -> tuple[str, dict[str, Any]]:
+    clean_platforms = [platform for platform in platforms if platform in ALLOWED_PLATFORMS] or sorted(ALLOWED_PLATFORMS)
+    return f"""
+    SELECT m.platform, m.login, m.symbol,
+           count() AS trade_count, sum(m.volume) AS volume,
+           sum(m.profit) AS market_pnl, sum(m.turnover) AS turnover,
+           avg(m.holding_seconds) AS avg_holding_seconds
+    FROM risk.dwd_matched_trades AS m FINAL
+    INNER JOIN risk.ods_mt5_users AS u FINAL
+      ON m.platform = u.platform AND m.login = u.login
+    WHERE u.is_deleted = 0
+      AND positionCaseInsensitive(u.`group`, 'test') = 0
+      AND positionCaseInsensitive(u.`group`, 'demo') = 0
+      AND m.platform IN {{platforms:Array(String)}}
+      AND m.exit_time >= {{start:Date}}
+      AND m.exit_time < {{end_exclusive:Date}}
+      {_book_key_predicate(account_keys)}
+    GROUP BY m.platform, m.login, m.symbol
+    ORDER BY market_pnl DESC
+    """, {"platforms": clean_platforms, "start": start, "end_exclusive": _date_end_exclusive(end)}
+
+
+def build_daily_turnover_query(
+    *, platforms: list[str], start: str, end: str, account_keys: set[tuple[str, int]] | None = None
+) -> tuple[str, dict[str, Any]]:
+    clean_platforms = [platform for platform in platforms if platform in ALLOWED_PLATFORMS] or sorted(ALLOWED_PLATFORMS)
+    return f"""
+    SELECT m.platform, m.login, toDate(m.exit_time) AS trade_date,
+           sum(m.turnover) AS turnover,
+           sumIf(m.turnover, m.direction = 'Long') AS long_turnover,
+           sumIf(m.turnover, m.direction = 'Short') AS short_turnover,
+           sum(m.profit) AS market_pnl, count() AS trade_count
+    FROM risk.dwd_matched_trades AS m FINAL
+    INNER JOIN risk.ods_mt5_users AS u FINAL
+      ON m.platform = u.platform AND m.login = u.login
+    WHERE u.is_deleted = 0
+      AND positionCaseInsensitive(u.`group`, 'test') = 0
+      AND positionCaseInsensitive(u.`group`, 'demo') = 0
+      AND m.platform IN {{platforms:Array(String)}}
+      AND m.exit_time >= {{start:Date}}
+      AND m.exit_time < {{end_exclusive:Date}}
+      {_book_key_predicate(account_keys)}
+    GROUP BY m.platform, m.login, trade_date
+    ORDER BY trade_date, m.platform, m.login
+    """, {"platforms": clean_platforms, "start": start, "end_exclusive": _date_end_exclusive(end)}

@@ -9,8 +9,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .martingale import build_martingale_filter, load_martingale_snapshot, snapshot_path
+from .book_analytics import build_book_analytics
 from .exports import render_abook_csv
-from .models import AnalysisRequest, FilterOptions, SweepRequest
+from .models import AnalysisRequest, BookAnalyticsRequest, FilterOptions, SweepRequest
 from .personal_candidates import load_personal_candidates
 from .repository import ClickHouseRepository, RepositoryConfigurationError
 from .risk import build_local_risk_filter
@@ -245,6 +246,45 @@ def sweep(request: SweepRequest, repository: ClickHouseRepository = Depends(get_
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="ClickHouse sweep query failed") from exc
+
+
+@app.post("/api/abook/book-analytics")
+def book_analytics(
+    request: BookAnalyticsRequest,
+    repository: ClickHouseRepository = Depends(get_repository),
+) -> dict:
+    try:
+        analysis_payload = analysis(request.analysis, repository)
+        accounts = analysis_payload.get("accounts", [])
+        abook_keys = {
+            (str(account["platform"]), int(account["login"]))
+            for account in accounts
+            if account.get("cohort") == "abook_candidate"
+        }
+        if request.abook_accounts:
+            abook_keys = {(item.platform, int(item.login)) for item in request.abook_accounts}
+        daily_rows = _fetch_daily_rows(repository, request.analysis)
+        symbol_method = getattr(repository, "fetch_book_symbol_rows", None)
+        symbol_rows = symbol_method(request.analysis) if callable(symbol_method) else []
+        context = prepare_analysis_context(
+            [], daily_rows=daily_rows,
+            selection_start=request.analysis.selection.start.isoformat(),
+            selection_end=request.analysis.selection.end.isoformat(),
+            validation_start=request.analysis.validation.start.isoformat(),
+            validation_end=request.analysis.validation.end.isoformat(),
+        )
+        result = build_book_analytics(context, accounts, abook_keys, request.hedge_cost_bps, symbol_rows)
+        result["coverage"] = analysis_payload.get("coverage", {})
+        result["book_counts"] = {
+            "population": len(accounts),
+            "abook": sum(1 for account in accounts if (str(account["platform"]), int(account["login"])) in abook_keys),
+            "bbook": sum(1 for account in accounts if (str(account["platform"]), int(account["login"])) not in abook_keys),
+        }
+        return result
+    except RepositoryConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="ClickHouse book analytics query failed") from exc
 
 
 def _export_response(request: AnalysisRequest, repository: ClickHouseRepository) -> StreamingResponse:

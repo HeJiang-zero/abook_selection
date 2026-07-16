@@ -6,7 +6,13 @@ import clickhouse_connect
 
 from .config import Settings, get_settings
 from .models import AnalysisRequest
-from .queries import build_account_detail_query, build_analysis_query, build_daily_pnl_query
+from .queries import (
+    build_account_detail_query,
+    build_analysis_query,
+    build_book_symbol_query,
+    build_daily_pnl_query,
+    build_daily_turnover_query,
+)
 
 
 class RepositoryConfigurationError(RuntimeError):
@@ -84,6 +90,22 @@ class ClickHouseRepository:
 
     def fetch_account_detail(self, platform: str, login: int, start: str, end: str) -> list[dict[str, Any]]:
         query, params = build_account_detail_query(platform, login, start, end)
+        return self._rows(query, params)
+
+    def fetch_book_symbol_rows(self, request: AnalysisRequest, account_keys: set[tuple[str, int]] | None = None) -> list[dict[str, Any]]:
+        start = min(request.selection.start, request.validation.start)
+        end = max(request.selection.end, request.validation.end)
+        query, params = build_book_symbol_query(
+            platforms=request.platforms, start=start.isoformat(), end=end.isoformat(), account_keys=account_keys
+        )
+        return self._rows(query, params)
+
+    def fetch_daily_turnover_rows(self, request: AnalysisRequest, account_keys: set[tuple[str, int]] | None = None) -> list[dict[str, Any]]:
+        start = min(request.selection.start, request.validation.start)
+        end = max(request.selection.end, request.validation.end)
+        query, params = build_daily_turnover_query(
+            platforms=request.platforms, start=start.isoformat(), end=end.isoformat(), account_keys=account_keys
+        )
         return self._rows(query, params)
 
     def fetch_filter_options(self) -> dict[str, list[str]]:
