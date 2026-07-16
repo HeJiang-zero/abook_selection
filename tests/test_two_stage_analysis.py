@@ -176,22 +176,19 @@ def test_two_stage_analysis_separates_selection_and_validation_and_keeps_inactiv
         "eligible_accounts": 3,
         "unique_accounts": 3,
         "account_rows": 3,
-        "abook_candidates": 1,
-        "bbook_candidates": 1,
-        "directional_abook_candidates": 1,
-        "directional_bbook_candidates": 1,
-        "observation": 1,
-        "personal_abook_candidates": 0,
-        "personal_added_abook_candidates": 0,
-        "personal_overlap_abook_candidates": 0,
+        "abook": 1,
+        "bbook": 2,
+        "martingale_bbook": 0,
+        "personal_abook": 0,
+        "personal_bbook_martingale": 0,
     }
     accounts = {account["login"]: account for account in result["accounts"]}
-    assert accounts[1]["cohort"] == "abook_candidate"
+    assert accounts[1]["book"] == "abook"
     assert accounts[1]["validation_status"] == "inactive"
-    assert accounts[2]["cohort"] == "bbook_candidate"
+    assert accounts[2]["book"] == "bbook"
     assert accounts[2]["transition_status"] == "continued_loss"
     assert 4 not in accounts
-    assert result["validation"]["groups"]["abook_candidate"]["active_accounts"] == 0
+    assert result["validation"]["groups"]["abook"]["active_accounts"] == 0
 
 
 def test_two_stage_analysis_reports_transition_precision_lift_and_abook_delta():
@@ -232,13 +229,13 @@ def test_two_stage_analysis_reports_transition_precision_lift_and_abook_delta():
         min_stability_score=0,
     )
 
-    assert result["transitions"]["abook_candidate"]["continued_profitable"] == 1
-    assert result["transitions"]["bbook_candidate"]["continued_loss"] == 1
-    assert result["validation"]["groups"]["abook_candidate"]["precision"] == 1.0
-    assert result["validation"]["groups"]["bbook_candidate"]["precision"] == 1.0
-    assert result["profit_impact"]["abook_candidate"]["selection_client_net_pnl"] == 200.0
-    assert result["profit_impact"]["abook_candidate"]["incremental_change"] == 200.0
-    assert result["profit_impact"]["bbook_candidate"]["incremental_change"] == -200.0
+    assert result["transitions"]["abook"]["continued_profitable"] == 1
+    assert result["transitions"]["bbook"]["continued_loss"] == 1
+    assert result["validation"]["groups"]["abook"]["precision"] == 1.0
+    assert result["validation"]["groups"]["bbook"]["precision"] == 0.5
+    assert result["profit_impact"]["abook"]["selection_client_net_pnl"] == 200.0
+    assert result["profit_impact"]["abook"]["incremental_change"] == 200.0
+    assert result["profit_impact"]["bbook"]["incremental_change"] == -190.0
     json.dumps(result, allow_nan=False)
 
 
@@ -279,9 +276,9 @@ def test_two_stage_analysis_requires_win_rate_monthly_consistency_and_risk_conce
     )
 
     accounts = {account["login"]: account for account in result["accounts"]}
-    assert accounts[21]["cohort"] == "abook_candidate"
-    assert accounts[22]["base_cohort"] == "observation"
-    assert accounts[23]["base_cohort"] == "observation"
+    assert accounts[21]["book"] == "abook"
+    assert accounts[22]["book"] == "bbook"
+    assert accounts[23]["book"] == "bbook"
     assert accounts[21]["selection"]["monthly_consistency_ratio"] == 0.6
 
 
@@ -319,9 +316,9 @@ def test_two_stage_analysis_requires_strict_top1_contribution_and_skips_leverage
             daily_positive_sum=100, max_positive_day=19),
     ]
     for item in high_leverage:
-        item.update(risk_balance_prev_month=100, risk_balance_status="positive", risk_peak_leverage_ratio=8)
+        item.update(risk_balance_prev_month=100, risk_balance_status="positive", risk_leverage_p95_ratio=8)
     for item in zero_balance:
-        item.update(risk_balance_prev_month=0, risk_balance_status="unknown_nonpositive_balance", risk_peak_leverage_ratio=None)
+        item.update(risk_balance_prev_month=0, risk_balance_status="unknown_nonpositive_balance", risk_leverage_p95_ratio=None)
 
     result = build_two_stage_payload(
         diffuse + exactly_twenty + high_leverage + zero_balance,
@@ -337,10 +334,10 @@ def test_two_stage_analysis_requires_strict_top1_contribution_and_skips_leverage
     )
 
     accounts = {account["login"]: account for account in result["accounts"]}
-    assert accounts[31]["cohort"] == "abook_candidate"
-    assert accounts[32]["base_cohort"] == "observation"
-    assert accounts[33]["base_cohort"] == "observation"
-    assert accounts[34]["cohort"] == "abook_candidate"
+    assert accounts[31]["book"] == "abook"
+    assert accounts[32]["book"] == "bbook"
+    assert accounts[33]["book"] == "bbook"
+    assert accounts[34]["book"] == "abook"
 
 
 def test_two_stage_analysis_allows_short_holding_high_leverage_exception_only():
@@ -358,10 +355,10 @@ def test_two_stage_analysis_allows_short_holding_high_leverage_exception_only():
     ]
     for item in short_hold:
         item.update(risk_balance_prev_month=100, risk_balance_status="positive",
-                    risk_peak_leverage_ratio=250, selection_median_holding_seconds=60)
+                    risk_leverage_p95_ratio=250, selection_median_holding_seconds=60)
     for item in long_hold:
         item.update(risk_balance_prev_month=100, risk_balance_status="positive",
-                    risk_peak_leverage_ratio=250, selection_median_holding_seconds=600)
+                    risk_leverage_p95_ratio=250, selection_median_holding_seconds=600)
 
     result = build_two_stage_payload(
         short_hold + long_hold,
@@ -376,8 +373,8 @@ def test_two_stage_analysis_allows_short_holding_high_leverage_exception_only():
     )
 
     accounts = {account["login"]: account for account in result["accounts"]}
-    assert accounts[35]["cohort"] == "abook_candidate"
-    assert accounts[36]["base_cohort"] == "observation"
+    assert accounts[35]["book"] == "abook"
+    assert accounts[36]["book"] == "bbook"
 
 
 def test_two_stage_analysis_keeps_test_accounts_excluded():
@@ -463,7 +460,7 @@ def test_two_stage_analysis_exposes_monthly_company_profit_and_july_book_split()
     assert monthly["2026-05"]["company_bbook_profit"] == 0.0
     assert monthly["2026-06"]["company_bbook_profit"] == 0.0
     assert result["profit_overview"]["july_book_split"]["abook"]["user_net_pnl"] == 70.0
-    assert result["profit_overview"]["july_book_split"]["book"]["company_profit"] == 60.0
+    assert result["profit_overview"]["july_book_split"]["bbook"]["company_profit"] == 60.0
 
 
 def test_profit_overview_uses_stable_unfiltered_population_rows():
@@ -554,7 +551,7 @@ def test_two_stage_analysis_scores_stability_and_penalizes_one_day_concentration
     assert "profit_concentration" in concentrated["selection_flags"]
     assert stable["stability"]["score"] > concentrated["stability"]["score"]
     assert stable["confidence_tier"] in {"medium", "high"}
-    assert result["selection"]["stability_overview"]["abook_core_or_watch"] >= 1
+    assert result["selection"]["stability_overview"]["bbook"] == 2
     assert result["coverage"]["source_min"] == "2026-05-15"
     assert "2026-05" in result["coverage"]["partial_months"]
 
@@ -615,13 +612,13 @@ def test_two_stage_analysis_only_deploys_stable_candidates_and_uses_active_preci
         min_selection_monthly_consistency=0.5,
     )
 
-    assert result["selection"]["counts"]["abook_candidates"] == 1
-    assert result["selection"]["counts"]["bbook_candidates"] == 1
+    assert result["selection"]["counts"]["abook"] == 1
+    assert result["selection"]["counts"]["bbook"] == 2
     accounts = {account["login"]: account for account in result["accounts"]}
     assert "monthly_consistency" in accounts[22]["selection_flags"]
-    assert result["validation"]["groups"]["abook_candidate"]["precision"] == 1.0
-    assert result["validation"]["groups"]["abook_candidate"]["active_positive_account_rate"] == 1.0
-    assert result["validation"]["groups"]["bbook_candidate"]["active_negative_account_rate"] == 1.0
+    assert result["validation"]["groups"]["abook"]["precision"] == 1.0
+    assert result["validation"]["groups"]["abook"]["active_positive_account_rate"] == 1.0
+    assert result["validation"]["groups"]["bbook"]["active_negative_account_rate"] == 1.0
 
 
 def test_two_stage_analysis_uses_exact_cross_period_statistics():
@@ -722,9 +719,9 @@ def test_personal_candidate_list_forces_union_without_duplicate_account_impact()
         min_direction_day_rate_lower_bound=0, min_stability_score=0,
     )
 
-    assert result["selection"]["counts"]["abook_candidates"] == 2
-    assert result["selection"]["counts"]["personal_abook_candidates"] == 2
-    assert result["selection"]["counts"]["personal_added_abook_candidates"] == 1
-    assert result["selection"]["counts"]["personal_overlap_abook_candidates"] == 1
-    assert result["profit_impact"]["abook_candidate"]["validation_incremental_change"] == 50.0
+    assert result["selection"]["counts"]["abook"] == 2
+    assert result["selection"]["counts"]["personal_abook"] == 2
+    assert result["personal_candidate_list"]["added_accounts"] == 1
+    assert result["personal_candidate_list"]["overlap_accounts"] == 1
+    assert result["profit_impact"]["abook"]["validation_incremental_change"] == 50.0
     assert len([account for account in result["accounts"] if account["login"] == 601]) == 1

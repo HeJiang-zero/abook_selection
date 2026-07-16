@@ -29,10 +29,10 @@ def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
     assert "用户结构" in app
     assert "风险敞口" in app
     assert "分流质量" in app
-    assert "参数寻优" in app
+    assert "参数寻优" not in app
     assert "个人候选名单" in sidebar
     assert "马丁" in sidebar
-    for rule in ["min_trades", "min_stability_score", "max_peak_leverage_ratio", "excluded_martingale_levels"]:
+    for rule in ["min_trades", "min_stability_score", "max_leverage_p95_ratio", "max_daily_profit_month_contribution", "excluded_martingale_levels"]:
         assert rule in app or rule in sidebar
 
 
@@ -40,7 +40,7 @@ def test_frontend_uses_new_analysis_actions_and_book_lazy_load():
     api = _source("api.ts")
     app = _source("App.vue")
     assert "/api/abook/analysis" in api
-    assert "/api/abook/sweep" in api
+    assert "/api/abook/sweep" not in api
     assert "/api/abook/export" in api
     assert "/api/abook/book-analytics" in api
     assert "loadBook" in app
@@ -51,11 +51,9 @@ def test_frontend_uses_new_analysis_actions_and_book_lazy_load():
 
 
 def test_frontend_exposes_interactive_sweep_book_metrics_and_account_paging():
-    sweep = (FRONTEND / "src" / "components" / "SweepPanel.vue").read_text()
     books = (FRONTEND / "src" / "components" / "BookPerformance.vue").read_text()
     accounts = (FRONTEND / "src" / "components" / "AccountsTable.vue").read_text()
-    assert "maxMisjudgeCost" in sweep
-    assert "applyRules" in sweep
+    assert "Core + observation" not in books
     for metric in ["max_drawdown", "symbol_heatmap", "daily_turnover", "company_profit_comparison"]:
         assert metric in books
     for control in ["sortBy", "pageSize", "page"]:

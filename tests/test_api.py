@@ -94,7 +94,7 @@ def test_analysis_returns_two_stage_payload_for_new_request():
 
     assert response.status_code == 200
     body = response.json()
-    assert body["selection"]["counts"]["abook_candidates"] == 1
+    assert body["selection"]["counts"]["abook"] == 1
     assert body["coverage"]["validation_partial"] is True
     assert body["rules"]["min_stability_score"] == 72
     assert body["rules"]["max_top1_day_profit_contribution"] == 0.4

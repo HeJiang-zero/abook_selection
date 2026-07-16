@@ -25,6 +25,8 @@ def test_default_strategy_filters_are_profit_factor_and_average_daily_profit():
     assert request.validation.end.isoformat() == "2026-07-13"
     assert request.rules.min_positive_month_rate == 0.5
     assert request.rules.max_top1_day_profit_contribution == 0.2
+    assert request.rules.max_daily_profit_month_contribution == 0.6
+    assert request.rules.max_leverage_p95_ratio == 200.0
     assert request.rules.max_peak_leverage_ratio == 200.0
     assert request.rules.max_high_leverage_holding_seconds == 300.0
     assert request.rules.min_direction_day_rate_lower_bound == 0.55

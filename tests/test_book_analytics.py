@@ -2,9 +2,9 @@ from app.book_analytics import build_book_analytics, calculate_hedge_sensitivity
 from app.service import prepare_analysis_context
 
 
-def _account(login: int, cohort: str, validation_pnl: float, turnover: float):
+def _account(login: int, book: str, validation_pnl: float, turnover: float):
     return {
-        "platform": "mt5", "login": login, "account_group": "real", "cohort": cohort,
+        "platform": "mt5", "login": login, "account_group": "real", "book": book,
         "selection": {"client_net_pnl": 100, "trade_count": 10, "active_trade_days": 2, "turnover": turnover,
                        "avg_holding_seconds": 60, "median_holding_seconds": 60, "profit_factor": 1.5,
                        "winning_trades": 7, "losing_trades": 3},
@@ -18,7 +18,7 @@ def _account(login: int, cohort: str, validation_pnl: float, turnover: float):
 
 
 def test_bbook_is_population_minus_abook():
-    accounts = [_account(1, "abook_candidate", 20, 100000), _account(2, "bbook_candidate", -20, 50000), _account(3, "observation", 0, 20000)]
+    accounts = [_account(1, "abook", 20, 100000), _account(2, "bbook", -20, 50000), _account(3, "bbook", 0, 20000)]
     abook, bbook = split_books(accounts, {("mt5", 1)})
 
     assert {(row["platform"], row["login"]) for row in abook} == {("mt5", 1)}
@@ -34,7 +34,7 @@ def test_hedge_cost_reduces_increment_and_reports_break_even_bps():
 
 
 def test_book_analytics_returns_four_analysis_blocks():
-    accounts = [_account(1, "abook_candidate", 20, 100000), _account(2, "bbook_candidate", -20, 50000)]
+    accounts = [_account(1, "abook", 20, 100000), _account(2, "bbook", -20, 50000)]
     context = prepare_analysis_context(
         [], selection_start="2026-05-01", selection_end="2026-06-30",
         validation_start="2026-07-01", validation_end="2026-07-13",
@@ -48,8 +48,8 @@ def test_book_analytics_returns_four_analysis_blocks():
 
 def test_book_analytics_includes_routing_risk_and_distribution_metrics():
     accounts = [
-        _account(1, "abook_candidate", 20, 100000),
-        _account(2, "bbook_candidate", -20, 50000),
+        _account(1, "abook", 20, 100000),
+        _account(2, "bbook", -20, 50000),
     ]
     daily_rows = [
         {"platform": "mt5", "login": 1, "trade_date": "2026-07-01", "client_net_pnl": 10, "matched_trades": 2},
@@ -85,8 +85,8 @@ def test_book_analytics_includes_routing_risk_and_distribution_metrics():
 
 def test_book_analytics_separates_customer_pnl_from_company_profit_sign():
     accounts = [
-        _account(1, "abook_candidate", 20, 100000),
-        _account(2, "bbook_candidate", -20, 50000),
+        _account(1, "abook", 20, 100000),
+        _account(2, "bbook", -20, 50000),
     ]
     context = prepare_analysis_context(
         [], selection_start="2026-05-01", selection_end="2026-06-30",

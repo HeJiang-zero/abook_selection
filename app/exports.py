@@ -16,7 +16,7 @@ def render_abook_csv(accounts: list[dict]) -> str:
     writer = csv.DictWriter(handle, fieldnames=EXPORT_FIELDS, extrasaction="ignore", lineterminator="\n")
     writer.writeheader()
     for account in accounts:
-        if account.get("cohort") != "abook_candidate":
+        if account.get("book") != "abook":
             continue
         writer.writerow({
             "platform": account.get("platform", ""),

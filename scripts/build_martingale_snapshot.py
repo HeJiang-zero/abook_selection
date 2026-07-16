@@ -82,7 +82,8 @@ def build_snapshot(
     ), scored AS (
         SELECT
             *,
-            (layer1 AND layer3 AND layer4) AS gate,
+            (layer1 AND layer3 AND layer4) AS confirmed_gate,
+            (layer1 AND (layer2 OR layer3 OR layer4 OR layer5_strict OR layer5_alt)) AS gate,
             multiIf(
                 gate AND escalation >= 1.5 AND max_sequence_length >= 7 AND sequence_total_profit < 0, 'extreme',
                 gate AND (
@@ -106,6 +107,7 @@ def build_snapshot(
         countIf(layer1 AND layer2 AND layer3 AND layer4) AS layer4_windows,
         countIf(layer1 AND layer2 AND layer3 AND layer4 AND layer5_strict) AS strict_windows,
         countIf(layer1 AND layer2 AND layer3 AND layer4 AND layer5_alt) AS alt_windows,
+        countIf(confirmed_gate) AS confirmed_gate_windows,
         countIf(gate) AS gate_windows,
         countIf(tier = 'extreme') AS extreme_windows,
         countIf(tier = 'high') AS high_windows,
@@ -142,12 +144,15 @@ def build_snapshot(
             risk_level = "medium"
         else:
             risk_level = "low"
+        detection_mode = "confirmed" if int(row["confirmed_gate_windows"]) > 0 else "expanded"
         records.append({
             "platform": str(row["platform"]),
             "login": int(row["login"]),
             "risk_level": risk_level,
+            "detection_mode": detection_mode,
             "windows_total": int(row["windows_total"]),
             "gate_windows": int(row["gate_windows"]),
+            "confirmed_gate_windows": int(row["confirmed_gate_windows"]),
             "extreme_windows": int(row["extreme_windows"]),
             "high_windows": int(row["high_windows"]),
             "medium_windows": int(row["medium_windows"]),

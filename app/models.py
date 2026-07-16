@@ -38,6 +38,9 @@ class AnalysisRules(BaseModel):
     min_selection_monthly_consistency: float = Field(default=0.0, ge=0, le=1)
     min_positive_month_rate: float = Field(default=0.5, ge=0, le=1)
     max_top1_day_profit_contribution: float = Field(default=0.2, gt=0, le=1)
+    max_daily_profit_month_contribution: float = Field(default=0.6, gt=0, le=1)
+    max_leverage_p95_ratio: float = Field(default=200.0, gt=0)
+    # Kept for old clients; service decisions use max_leverage_p95_ratio.
     max_peak_leverage_ratio: float = Field(default=200.0, gt=0)
     max_high_leverage_holding_seconds: float = Field(default=300.0, ge=0)
     min_direction_day_rate_lower_bound: float = Field(default=0.55, ge=0, le=1)
@@ -45,8 +48,17 @@ class AnalysisRules(BaseModel):
     high_confidence_trades: int = Field(default=100, ge=0)
     high_confidence_days: int = Field(default=30, ge=0)
     excluded_martingale_levels: List[Literal["extreme", "high", "medium", "low"]] = Field(
-        default_factory=lambda: ["extreme", "high", "medium"]
+        default_factory=lambda: ["extreme", "high", "medium", "low"]
     )
+
+    @model_validator(mode="after")
+    def sync_legacy_leverage_rule(self) -> "AnalysisRules":
+        # Older clients only send max_peak_leverage_ratio. Treat that value as
+        # the p95 threshold during the migration, without using peak leverage
+        # in the calculation itself.
+        if self.max_peak_leverage_ratio != 200.0 and self.max_leverage_p95_ratio == 200.0:
+            self.max_leverage_p95_ratio = self.max_peak_leverage_ratio
+        return self
 
 
 class AnalysisRequest(BaseModel):

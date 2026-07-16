@@ -64,10 +64,10 @@ def _snapshot(tmp_path):
     return load_martingale_snapshot(path, "2026-05-01", "2026-06-30", ["mt5"])
 
 
-def test_rules_default_to_blocking_three_martingale_levels():
+def test_rules_default_to_blocking_all_martingale_levels():
     rules = AnalysisRules()
 
-    assert rules.excluded_martingale_levels == ["extreme", "high", "medium"]
+    assert rules.excluded_martingale_levels == ["extreme", "high", "medium", "low"]
 
 
 def test_martingale_block_wins_over_personal_candidate_override(tmp_path):
@@ -81,7 +81,7 @@ def test_martingale_block_wins_over_personal_candidate_override(tmp_path):
 
     account = classify_accounts(context, AnalysisRules(), {7}, _snapshot(tmp_path))[0]
 
-    assert account["cohort"] != "abook_candidate"
+    assert account["book"] == "bbook"
     assert account["selection_source"] == "martingale_blocked"
 
 

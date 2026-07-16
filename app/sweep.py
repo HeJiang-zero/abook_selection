@@ -11,7 +11,7 @@ MAX_SWEEP_COMBINATIONS = 500
 NUMERIC_RULE_FIELDS = {
     "min_trades", "min_active_days", "min_win_rate", "min_profit_factor",
     "min_payoff_ratio", "min_avg_daily_profit", "min_selection_monthly_consistency",
-    "min_positive_month_rate", "max_top1_day_profit_contribution", "max_peak_leverage_ratio",
+    "min_positive_month_rate", "max_top1_day_profit_contribution", "max_daily_profit_month_contribution", "max_leverage_p95_ratio",
     "max_high_leverage_holding_seconds", "min_direction_day_rate_lower_bound",
     "min_stability_score", "high_confidence_trades", "high_confidence_days",
 }
@@ -48,7 +48,7 @@ def _sum_validation(accounts: list[dict[str, Any]]) -> float:
 
 
 def _result_row(accounts: list[dict[str, Any]], rules: AnalysisRules) -> dict[str, Any]:
-    abook = [account for account in accounts if account["cohort"] == "abook_candidate"]
+    abook = [account for account in accounts if account["book"] == "abook"]
     active = [account for account in abook if account["validation"]["trade_count"] > 0]
     profitable = [account for account in active if account["validation_status"] == "profitable"]
     validation_increment = _sum_validation(abook)
@@ -56,12 +56,12 @@ def _result_row(accounts: list[dict[str, Any]], rules: AnalysisRules) -> dict[st
         sum(max(0.0, -float(account["validation"].get("client_net_pnl", 0.0))) for account in abook),
         6,
     )
-    observation = [account for account in accounts if account["cohort"] == "observation"]
-    observation_active = [account for account in observation if account["validation"]["trade_count"] > 0]
+    bbook = [account for account in accounts if account["book"] == "bbook"]
+    bbook_active = [account for account in bbook if account["validation"]["trade_count"] > 0]
     precision = len(profitable) / len(active) if active else 0.0
     observation_rate = (
-        sum(1 for account in observation_active if account["validation_status"] == "profitable") / len(observation_active)
-        if observation_active else 0.0
+        sum(1 for account in bbook_active if account["validation_status"] == "profitable") / len(bbook_active)
+        if bbook_active else 0.0
     )
     return {
         "rules": rules.model_dump(),

@@ -11,7 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_SNAPSHOT_PATH = BASE_DIR / "data" / "martingale_snapshot.json"
 
 RISK_LEVELS = ("extreme", "high", "medium", "low")
-DEFAULT_EXCLUDED_LEVELS = ("extreme", "high", "medium")
+DEFAULT_EXCLUDED_LEVELS = ("extreme", "high", "medium", "low")
 
 
 def _valid_record(record: Any) -> bool:

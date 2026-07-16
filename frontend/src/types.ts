@@ -1,4 +1,4 @@
-export type Tab = 'overview' | 'pnl' | 'users' | 'risk' | 'routing' | 'sweep'
+export type Tab = 'overview' | 'pnl' | 'users' | 'risk' | 'routing'
 
 export interface RequestModel {
   selection: { start: string; end: string }
@@ -13,7 +13,7 @@ export interface AccountRow {
   platform: string
   login: number
   account_group: string
-  cohort: string
+  book: 'abook' | 'bbook'
   selection_source: string
   selection_client_net_pnl: number
   validation_client_net_pnl: number

@@ -23,7 +23,7 @@ cd ..
 ./run_dashboard.sh
 ```
 
-构建产物输出到 `static/`，FastAPI 通过 `/assets` 托管。页面包含马丁状态与五层明细、误判成本、筛选漏斗、Book 分析、参数寻优和 Abook CSV 导出。
+构建产物输出到 `static/`，FastAPI 通过 `/assets` 托管。页面包含马丁状态与五层明细、误判成本、筛选漏斗、Abook/Bbook 分析和 Abook CSV 导出；参数寻优窗口已移除。
 
 ```bash
 python3 -m venv .venv
@@ -34,7 +34,7 @@ cd /Users/jianghe/abook_hedging && ./run_dashboard.sh
 首次运行前，把本地 ClickHouse 配置写入被 Git 忽略的 `.env`（可参考 `.env.example`）。脚本会自动加载 `.env` 并启动服务。
 打开 http://localhost:8000。生产环境请使用只读 ClickHouse 账号，并通过密钥管理注入 `CLICKHOUSE_PASSWORD`。
 
-默认筛选规则为：Abook 候选满足交易笔数 `>= 20`、活跃交易天数 `>= 10`、胜率 `>= 50%`、`Profit Factor > 1`、盈亏比 `>= 0.8`、平均交易日净利润 `> 0 USD`、盈利月份占比 `>= 50%`、日盈利率 95% 下限 `>= 55%`、稳定性评分 `>= 70`、Top1 日利润贡献率 `< 20%`、峰值杠杆率 `<= 200`。月度持续性参数保留为可选增强条件，默认不额外收紧筛选。峰值杠杆超过 200 时，仅筛选期中位持仓不超过 300 秒的用户保留为短持仓例外；Bbook 候选使用对应的亏损方向条件。平均交易日利润定义为：阶段内用户净交易 P&L（`profit + storage + commission + fee`，仅 `action IN (0,1)`）除以有交易的自然日数量。账户没有亏损交易时，PF 在筛选上视为无穷大，API 中以 `null` 表示，避免 JSON 非法数值。
+默认筛选规则为：Abook 满足交易笔数 `>= 20`、活跃交易天数 `>= 10`、胜率 `>= 50%`、`Profit Factor > 1`、盈亏比 `>= 0.8`、平均交易日净利润 `> 0 USD`、盈利月份占比 `>= 50%`、日盈利率 95% 下限 `>= 55%`、稳定性评分 `>= 70`、Top1 日利润贡献率 `< 20%`、单日最大盈利占当月利润占比 `<= 60%`、用户杠杆率 P95 `<= 200`。单日/月度利润占比按每个筛选月份分别计算，取最差月份。所有命中马丁等级（low/medium/high/extreme）的用户直接进入 Bbook，其他未通过 Abook 的账户也统一进入 Bbook。平均交易日利润定义为：阶段内用户净交易 P&L（`profit + storage + commission + fee`，仅 `action IN (0,1)`）除以有交易的自然日数量。账户没有亏损交易时，PF 在筛选上视为无穷大，API 中以 `null` 表示，避免 JSON 非法数值。
 
 账户组中不区分大小写包含 `test` 或 `demo` 的账户是测试账号，所有查询、服务层聚合和账户详情都会硬性排除。7 月验证阶段会保留没有交易的筛选账户，并标记为“无交易”。
 
@@ -45,7 +45,6 @@ cd /Users/jianghe/abook_hedging && ./run_dashboard.sh
 - `GET /api/health`
 - `GET /api/abook/filters`
 - `POST /api/abook/analysis`
-- `POST /api/abook/sweep`
 - `GET /api/abook/export` / `POST /api/abook/export`
 - `POST /api/abook/book-analytics`
 - `GET /api/abook/accounts/{platform}/{login}`
@@ -65,7 +64,8 @@ cd /Users/jianghe/abook_hedging && ./run_dashboard.sh
     "min_avg_daily_profit": 0,
     "min_positive_month_rate": 0.5,
     "max_top1_day_profit_contribution": 0.2,
-    "max_peak_leverage_ratio": 200,
+    "max_daily_profit_month_contribution": 0.6,
+    "max_leverage_p95_ratio": 200,
     "max_high_leverage_holding_seconds": 300,
     "min_direction_day_rate_lower_bound": 0.55,
     "min_stability_score": 70
@@ -77,7 +77,7 @@ cd /Users/jianghe/abook_hedging && ./run_dashboard.sh
 
 当前 Abook 利润影响是理论估算：假设进入 Abook 后交易所的对手盘利润为 0，因此迁移增量为用户净交易 P&L；不包含真实外部成交、点差、对冲成本、滑点和流动性成本。
 
-页面的符号口径固定为：customer_net_pnl 是客户净交易 P&L，不代表公司利润；留在 Bbook 时公司利润为客户净交易 P&L 取负；Abook 用户的正负只用于命中、误判和样本外验证，Abook 实际公司利润在没有外部成交数据时显示为理论 0。Abook 候选的“公司增量”是把该用户从 Bbook 移到 Abook 的理论变化，验证期还可以再扣除对冲成本。Bbook “漏网”只统计被判为 bbook_candidate 但验证期转正的用户，不把 observation 控制组混入误判金额。
+页面的符号口径固定为：customer_net_pnl 是客户净交易 P&L，不代表公司利润；留在 Bbook 时公司利润为客户净交易 P&L 取负；Abook 用户的正负只用于命中、误判和样本外验证，不能直接当作公司盈亏。Bbook “漏网”只统计最终进入 Bbook 但验证期转正的用户，公司损失为负值；总额按全部漏网账户计算，页面名单默认只显示金额大于 100 的账户。
 
 volume 沿用 dwd_matched_trades.volume 原始单位；不同品种可能有不同交易量精度（例如外汇数据可出现 1000），不能直接当作统一“手数”。turnover 是交易名义金额风险代理，也不是公司利润，页面单独标注。
 
@@ -89,19 +89,19 @@ volume 沿用 dwd_matched_trades.volume 原始单位；不同品种可能有不�
 .venv/bin/python scripts/build_user_risk_snapshot.py --selection-start 2026-05-01 --selection-end 2026-06-30
 ```
 
-快照默认写入 `data/user_risk_snapshot.json`，也可用 `ABOOK_RISK_SNAPSHOT_PATH` 覆盖路径。快照使用 matched trades 的 `turnover` 计算平均开仓程度和峰值杠杆率，并记录筛选期中位持仓秒数。峰值杠杆率定义为：单日交易名义金额峰值 / `balance_prev_month`；`balance_prev_month <= 0` 的用户不计算杠杆率。SQL 会排除 group 中大小写不敏感包含 `test` 或 `demo` 的账户，例如 `real\\FPlive\\TEST_USD_ZO_BA_NT_H`、`demo\\HHdemo\\forexhh-USD`。该本地文件不会提交到 GitHub。
+快照默认写入 `data/user_risk_snapshot.json`，也可用 `ABOOK_RISK_SNAPSHOT_PATH` 覆盖路径。快照使用 matched trades 的 `turnover` 计算平均开仓程度和用户杠杆率 P95，并记录筛选期中位持仓秒数。杠杆率定义为每日交易名义金额 / `balance_prev_month`，P95 用于筛选，峰值只作为审计字段；`balance_prev_month <= 0` 的用户不计算杠杆率。SQL 会排除 group 中大小写不敏感包含 `test` 或 `demo` 的账户，例如 `real\\FPlive\\TEST_USD_ZO_BA_NT_H`、`demo\\HHdemo\\forexhh-USD`。该本地文件不会提交到 GitHub。
 
 全量风险名单会在用户 SQL 中按平台生成安全的 Login 排除条件，避免把数万 Login 放进 HTTP 参数导致 414；只有指定少量 Login 时才使用交集过滤。
 
 `balance_prev_month` 为空或小于等于 0 时不会把杠杆率伪造为 0：该用户标记为 `unknown_nonpositive_balance`，跳过杠杆上限，但继续执行胜率、PF、盈亏比、月度持续性和 Top1 日贡献率筛选。快照缺失或日期不匹配时，页面会显示风险快照状态，不会声称杠杆过滤已生效。
 
-高杠杆例外不是无条件放行：只有峰值杠杆超过上限且筛选期中位持仓不超过例外秒数时才放行；短持仓时间来自本地快照，因此仍可在页面请求中使用本地 Login 过滤。
+高杠杆例外不是无条件放行：只有杠杆率 P95 超过上限且筛选期中位持仓不超过例外秒数时才放行；短持仓时间来自本地快照，因此仍可在页面请求中使用本地 Login 过滤。
 
-页面顶部的 Abook / Bbook 盈亏分析按 Abook Core 与展示 Bbook（Bbook Core + observation）分别展示筛选期和验证期的账户数、盈利/亏损/中性账户、毛盈利、毛亏损、净 P&L、当前 Bbook 利润和假设 Abook 利润；理论增量只展示 7 月样本外验证期。Abook 理论增量定义为：`假设 Abook 利润 - 当前 Bbook 利润`；在当前没有外部 Abook 成交数据时，假设 Abook 利润为 0，因此它不是实际可实现利润。
+页面顶部的 Abook / Bbook 盈亏分析只展示两种最终归属。Abook 和 Bbook 分别展示筛选期、验证期客户 P&L；Bbook 公司盈亏为客户 P&L 取负，Abook 客户盈亏只用于命中、误判和验证，不能冒充公司利润。
 
 阶段公司利润概览是总体人口基线：它使用相同日期、平台、账户组和 test/demo 排除条件，但不使用 Abook 的胜率、PF、稳定性或杠杆筛选。这样修改筛选参数不会改变每个月的总体公司利润；只有日期、平台、账户组或 Login 范围变化时，基线才会变化。
 
-页面的 P&L 区域使用筛选期与验证期的日度增量曲线，悬浮到日期时显示公司净 P&L、对应 Book 净 P&L、盈利 P&L 和亏损 P&L 的当天值。展示层的 BBook 固定包含 Bbook Core 与 observation 候选组；内部筛选仍保留 observation 原始标记用于审计。
+页面的 P&L 区域使用筛选期与验证期的日度增量曲线，悬浮到日期时显示公司净 P&L、对应 Book 净 P&L、盈利 P&L 和亏损 P&L 的当天值。每个账户只属于 Abook 或 Bbook，筛选原因和马丁等级仅作为审计信息。
 
 这里的 `Profit Factor` 不是单笔交易的传统盈亏比：PF = 阶段总盈利 ÷ 阶段总亏损绝对值；页面的“盈亏比”是 `Payoff Ratio = 平均盈利交易 ÷ 平均亏损交易绝对值`。胜率、Payoff Ratio 和 PF 必须结合使用，单独提高胜率可能得到小赚大亏的策略。当前杠杆率使用交易名义金额 / 上月余额，是仓位管理的可审计代理，不等同于平台真实保证金风险率或净敞口。
 

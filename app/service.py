@@ -65,6 +65,31 @@ def _median(values: list[Decimal]) -> Decimal:
     return (ordered[middle - 1] + ordered[middle]) / Decimal("2")
 
 
+def _percentile(values: Iterable[Decimal], quantile: float) -> Decimal:
+    """Linear-interpolated percentile for small local snapshot vectors."""
+    ordered = sorted(_finite_decimal(value) for value in values)
+    if not ordered:
+        return ZERO
+    if quantile <= 0:
+        return ordered[0]
+    if quantile >= 1:
+        return ordered[-1]
+    position = Decimal(str(quantile)) * Decimal(len(ordered) - 1)
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - Decimal(lower)
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def _final_book(*, martingale_detected: bool, personal_candidate: bool, abook_rules_pass: bool) -> str:
+    """Return the only two allowed business destinations."""
+    if martingale_detected:
+        return "bbook"
+    if personal_candidate or abook_rules_pass:
+        return "abook"
+    return "bbook"
+
+
 def _decimal(value: Any) -> Decimal:
     if value is None:
         return ZERO
@@ -201,6 +226,12 @@ def _aggregate_account(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "risk_balance_prev_month": _optional_float(first.get("risk_balance_prev_month")),
         "risk_average_open_degree": _optional_float(first.get("risk_average_open_degree")),
         "risk_peak_leverage_ratio": _optional_float(first.get("risk_peak_leverage_ratio")),
+        "risk_leverage_p95_ratio": _optional_float(
+            _percentile(
+                [row.get("risk_leverage_p95_ratio") for row in rows if row.get("risk_leverage_p95_ratio") is not None],
+                0.95,
+            )
+        ),
         "risk_balance_status": first.get("risk_balance_status", "not_available"),
         "agent": int(first.get("agent", 0) or 0),
         "client_id": str(first.get("client_id", "")),
@@ -494,6 +525,13 @@ def _account_period_metrics(
     metrics["top_negative_day_concentration"] = _safe_ratio(
         abs(_decimal(metrics.get("min_negative_day"))), abs(negative_sum)
     )
+    monthly_contributions = []
+    for row in rows:
+        month_profit = _decimal(row.get("client_net_pnl"))
+        max_positive_day = _decimal(row.get("max_positive_day"))
+        if month_profit > ZERO and max_positive_day > ZERO:
+            monthly_contributions.append(_safe_ratio(max_positive_day, month_profit))
+    metrics["max_daily_profit_month_contribution"] = max(monthly_contributions, default=0.0)
     metrics["monthly_pnl_stddev"] = _float(_stddev(month_values))
     metrics["best_month_pnl"] = _float(max(month_values) if month_values else ZERO)
     metrics["worst_month_pnl"] = _float(min(month_values) if month_values else ZERO)
@@ -550,7 +588,8 @@ def _stability_assessment(
     min_positive_month_rate: float,
     min_selection_monthly_consistency: float,
     max_top1_day_profit_contribution: float,
-    max_peak_leverage_ratio: float,
+    max_daily_profit_month_contribution: float,
+    max_leverage_p95_ratio: float,
     max_high_leverage_holding_seconds: float,
     min_direction_day_rate_lower_bound: float,
     min_stability_score: float,
@@ -597,15 +636,17 @@ def _stability_assessment(
         flags.append("monthly_consistency")
     if direction in {"positive", "negative"} and concentration >= max_top1_day_profit_contribution:
         flags.append("profit_concentration" if is_positive else "loss_concentration")
+    if direction == "positive" and selection["max_daily_profit_month_contribution"] > max_daily_profit_month_contribution:
+        flags.append("daily_profit_month_concentration")
     if (
         selection.get("risk_balance_status") == "positive"
         and not _leverage_filter_pass(
             selection,
-            max_peak_leverage_ratio,
+            max_leverage_p95_ratio,
             max_high_leverage_holding_seconds,
         )
     ):
-        flags.append("leverage_ratio")
+        flags.append("leverage_p95_ratio")
     if confidence_tier == "low":
         flags.append("insufficient_sample")
     if direction in {"positive", "negative"} and selection["max_drawdown"] > 0:
@@ -628,10 +669,11 @@ def _stability_assessment(
     score = round(max(0.0, min(100.0, score)), 2)
     hard_flags = {
         "insufficient_months", "monthly_inconsistency", "daily_confidence",
-        "profit_concentration", "loss_concentration", "leverage_ratio", "insufficient_sample", "drawdown_efficiency",
+        "profit_concentration", "loss_concentration", "daily_profit_month_concentration",
+        "leverage_p95_ratio", "insufficient_sample", "drawdown_efficiency",
         "win_rate", "payoff_ratio", "monthly_consistency",
     }
-    tier = "observation"
+    tier = "unqualified"
     if direction in {"positive", "negative"}:
         tier = "core" if score >= min_stability_score and not (set(flags) & hard_flags) else "watch"
     if not flags and direction in {"positive", "negative"}:
@@ -653,15 +695,17 @@ def _stability_assessment(
 
 def _leverage_filter_pass(
     selection: dict[str, Any],
-    max_peak_leverage_ratio: float,
+    max_leverage_p95_ratio: float,
     max_high_leverage_holding_seconds: float | None = None,
 ) -> bool:
     """Apply leverage only with positive balance; allow short-hold exceptions."""
     if selection.get("risk_balance_status") != "positive":
         return True
-    peak = selection.get("risk_peak_leverage_ratio")
-    if peak is None or peak <= max_peak_leverage_ratio:
-        return peak is not None
+    leverage_p95 = selection.get("risk_leverage_p95_ratio")
+    if leverage_p95 is None:
+        return True
+    if leverage_p95 <= max_leverage_p95_ratio:
+        return True
     holding = selection.get("median_holding_seconds")
     return (
         max_high_leverage_holding_seconds is not None
@@ -710,7 +754,8 @@ def classify_accounts(
         min_selection_monthly_consistency=rules.min_selection_monthly_consistency,
         min_positive_month_rate=rules.min_positive_month_rate,
         max_top1_day_profit_contribution=rules.max_top1_day_profit_contribution,
-        max_peak_leverage_ratio=rules.max_peak_leverage_ratio,
+        max_daily_profit_month_contribution=rules.max_daily_profit_month_contribution,
+        max_leverage_p95_ratio=rules.max_leverage_p95_ratio,
         max_high_leverage_holding_seconds=rules.max_high_leverage_holding_seconds,
         min_direction_day_rate_lower_bound=rules.min_direction_day_rate_lower_bound,
         min_stability_score=rules.min_stability_score,
@@ -842,13 +887,13 @@ def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
             "selection_flags": list(account.get("selection_flags", [])),
             "martingale_risk_level": account.get("martingale_risk_level"),
         }
-        if account.get("cohort") == "abook_candidate" and validation_pnl < 0:
+        if account.get("book") == "abook" and validation_pnl < 0:
             abook_losses.append({
                 **item,
                 "loss_amount": round(-validation_pnl, 6),
                 "company_increment_if_routed": round(validation_pnl, 6),
             })
-        elif account.get("cohort") == "bbook_candidate" and validation_pnl > 0:
+        elif account.get("book") == "bbook" and validation_pnl > 0:
             bbook_profitable.append({
                 **item,
                 "profit_amount": round(validation_pnl, 6),
@@ -865,21 +910,39 @@ def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def build_selection_funnel(accounts: list[dict[str, Any]], eligible_accounts: int | None = None) -> dict[str, Any]:
+def build_selection_funnel(
+    accounts: list[dict[str, Any]],
+    eligible_accounts: int | None = None,
+    *,
+    min_trades: int | None = None,
+    min_active_days: int | None = None,
+) -> dict[str, Any]:
     all_accounts = list(accounts)
+    has_explicit_sample_rule = min_trades is not None or min_active_days is not None
+    required_trades = int(min_trades or 0)
+    required_active_days = int(min_active_days or 0)
     stages = [
         ("eligible", lambda account: True, "not_in_query_population"),
         (
             "sample_qualified",
-            lambda account: account.get("selection", {}).get("trade_count", 0) > 0
-            and account.get("selection", {}).get("active_trade_days", 0) > 0,
+            (
+                lambda account: (
+                    account.get("selection", {}).get("trade_count", 0) >= required_trades
+                    and account.get("selection", {}).get("active_trade_days", 0) >= required_active_days
+                )
+                if has_explicit_sample_rule
+                else (
+                    account.get("selection", {}).get("trade_count", 0) > 0
+                    and account.get("selection", {}).get("active_trade_days", 0) > 0
+                )
+            ),
             "insufficient_sample",
         ),
-        ("directional", lambda account: account.get("base_cohort") in {"abook_candidate", "bbook_candidate"}, "no_direction"),
+        ("positive_direction", lambda account: account.get("selection_direction") == "positive", "no_positive_direction"),
         ("stability_core", lambda account: account.get("stability", {}).get("tier") == "core", "stability_watch"),
-        ("leverage_passed", lambda account: "leverage_ratio" not in account.get("selection_flags", []), "leverage_ratio"),
+        ("leverage_passed", lambda account: "leverage_p95_ratio" not in account.get("selection_flags", []), "leverage_p95_ratio"),
         ("non_martingale", lambda account: not account.get("martingale_blocked", False), "martingale_blocked"),
-        ("abook_core", lambda account: account.get("cohort") == "abook_candidate", "not_abook_candidate"),
+        ("abook", lambda account: account.get("book") == "abook", "abook_rules_failed"),
     ]
     prior = all_accounts
     output = []
@@ -904,15 +967,15 @@ def _status(value: float, trade_count: int) -> str:
     return "neutral"
 
 
-def _transition(cohort: str, validation_status: str) -> str:
-    if cohort == "abook_candidate":
+def _transition(book: str, validation_status: str) -> str:
+    if book == "abook":
         return {
             "profitable": "continued_profitable",
             "loss": "started_loss",
             "neutral": "neutral",
             "inactive": "inactive",
         }[validation_status]
-    if cohort == "bbook_candidate":
+    if book == "bbook":
         return {
             "loss": "continued_loss",
             "profitable": "turned_profit",
@@ -1017,7 +1080,7 @@ def _daily_book_series(
 
     account_books = {
         (str(account["platform"]), int(account["login"])):
-            "abook" if account["cohort"] == "abook_candidate" else "bbook"
+            account["book"]
         for account in accounts
     }
     effective_rows = list(daily_rows or [])
@@ -1088,7 +1151,9 @@ def build_two_stage_payload(
     min_selection_monthly_consistency: float = 0.0,
     min_positive_month_rate: float = 0.5,
     max_top1_day_profit_contribution: float = 0.2,
-    max_peak_leverage_ratio: float = 200.0,
+    max_daily_profit_month_contribution: float = 1.0,
+    max_leverage_p95_ratio: float = 200.0,
+    max_peak_leverage_ratio: float | None = None,
     max_high_leverage_holding_seconds: float = 300.0,
     risk_snapshot_status: str = "not_loaded",
     min_direction_day_rate_lower_bound: float = 0.55,
@@ -1098,9 +1163,11 @@ def build_two_stage_payload(
     personal_candidate_logins: set[int] | None = None,
     personal_candidate_info: dict[str, Any] | None = None,
     martingale_snapshot: Any | None = None,
-    excluded_martingale_levels: Iterable[str] = ("extreme", "high", "medium"),
+    excluded_martingale_levels: Iterable[str] = ("extreme", "high", "medium", "low"),
 ) -> dict[str, Any]:
-    """Build a selection-period cohort and an independent validation-period readout."""
+    """Build final Abook/Bbook routing and an independent validation-period readout."""
+    if max_peak_leverage_ratio is not None and max_leverage_p95_ratio == 200.0:
+        max_leverage_p95_ratio = max_peak_leverage_ratio
     materialized = list(rows)
     # This is a hard safety boundary. The query already applies the same
     # predicates, and the service repeats them for injected/test rows.
@@ -1145,30 +1212,17 @@ def build_two_stage_payload(
         selection_consistency_ok = (
             selection["monthly_consistency_ratio"] >= min_selection_monthly_consistency
         )
-        if qualifies_sample and selection["client_net_pnl"] > 0 and (
+        abook_rules_pass = qualifies_sample and selection["client_net_pnl"] > 0 and (
             selection["profit_factor"] is None or selection["profit_factor"] > min_profit_factor
         ) and selection["average_daily_profit"] > min_avg_daily_profit \
             and selection["win_rate"] >= min_win_rate \
             and selection["payoff_ratio"] >= min_payoff_ratio \
             and selection_consistency_ok \
             and selection["top_positive_day_concentration"] < max_top1_day_profit_contribution \
+            and selection["max_daily_profit_month_contribution"] <= max_daily_profit_month_contribution \
             and _leverage_filter_pass(
-                selection, max_peak_leverage_ratio, max_high_leverage_holding_seconds
-            ):
-            directional_cohort = "abook_candidate"
-        elif qualifies_sample and selection["client_net_pnl"] < 0 and (
-            selection["profit_factor"] is not None and selection["profit_factor"] < min_profit_factor
-        ) and selection["average_daily_profit"] < -min_avg_daily_profit \
-            and selection["win_rate"] <= 1 - min_win_rate \
-            and selection["payoff_ratio"] <= (1 / min_payoff_ratio if min_payoff_ratio else float("inf")) \
-            and selection_consistency_ok \
-            and selection["top_negative_day_concentration"] < max_top1_day_profit_contribution \
-            and _leverage_filter_pass(
-                selection, max_peak_leverage_ratio, max_high_leverage_holding_seconds
-            ):
-            directional_cohort = "bbook_candidate"
-        else:
-            directional_cohort = "observation"
+                selection, max_leverage_p95_ratio, max_high_leverage_holding_seconds
+            )
         stability = _stability_assessment(
             selection,
             min_trades=min_trades,
@@ -1179,40 +1233,50 @@ def build_two_stage_payload(
             min_positive_month_rate=min_positive_month_rate,
             min_selection_monthly_consistency=min_selection_monthly_consistency,
             max_top1_day_profit_contribution=max_top1_day_profit_contribution,
-            max_peak_leverage_ratio=max_peak_leverage_ratio,
+            max_daily_profit_month_contribution=max_daily_profit_month_contribution,
+            max_leverage_p95_ratio=max_leverage_p95_ratio,
             max_high_leverage_holding_seconds=max_high_leverage_holding_seconds,
             min_direction_day_rate_lower_bound=min_direction_day_rate_lower_bound,
             min_stability_score=min_stability_score,
             high_confidence_trades=high_confidence_trades,
             high_confidence_days=high_confidence_days,
         )
-        cohort = (
-            directional_cohort
-            if directional_cohort in {"abook_candidate", "bbook_candidate"}
-            and stability["tier"] == "core"
-            else "observation"
-        )
+        abook_rules_pass = bool(abook_rules_pass and stability["tier"] == "core")
         is_personal_candidate = int(identity["login"]) in personal_logins
-        rule_deployable = cohort in {"abook_candidate", "bbook_candidate"}
         martingale_record = None
         if martingale_snapshot is not None and getattr(martingale_snapshot, "status", "") == "ready":
             martingale_record = martingale_snapshot.indexed_records().get(
                 (str(identity["platform"]), int(identity["login"]))
             )
         martingale_level = martingale_record.get("risk_level") if martingale_record else None
-        martingale_blocked = martingale_level in set(excluded_martingale_levels)
-        if martingale_blocked:
-            cohort = "bbook_candidate" if directional_cohort == "abook_candidate" else "observation"
+        snapshot_unavailable = martingale_snapshot is not None and getattr(martingale_snapshot, "status", "") != "ready"
+        martingale_blocked = snapshot_unavailable or martingale_level in set(excluded_martingale_levels)
+        book = _final_book(
+            martingale_detected=martingale_blocked,
+            personal_candidate=is_personal_candidate,
+            abook_rules_pass=abook_rules_pass,
+        )
+        if snapshot_unavailable:
+            selection_source = "martingale_snapshot_unavailable"
+        elif martingale_blocked:
             selection_source = "martingale_blocked"
         elif is_personal_candidate:
-            cohort = "abook_candidate"
             selection_source = (
                 "rule_and_personal_list"
-                if rule_deployable and directional_cohort == "abook_candidate"
+                if abook_rules_pass
                 else "personal_candidate_list"
             )
+        elif abook_rules_pass:
+            selection_source = "rule_filter"
         else:
-            selection_source = "rule_filter" if rule_deployable else "observation"
+            selection_source = "abook_rules_failed"
+        routing_reason = (
+            "martingale_snapshot_unavailable" if snapshot_unavailable
+            else "martingale" if martingale_blocked
+            else "personal_list" if is_personal_candidate
+            else "abook_rules" if abook_rules_pass
+            else "abook_rules_failed"
+        )
         validation_status = _status(
             validation["client_net_pnl"], validation["trade_count"]
         )
@@ -1225,18 +1289,19 @@ def build_two_stage_payload(
         )
         account = {
             **identity,
-            "cohort": cohort,
-            "base_cohort": directional_cohort,
-            "deployable": cohort in {"abook_candidate", "bbook_candidate"},
+            "book": book,
+            "deployable": True,
             "is_personal_candidate": is_personal_candidate,
             "selection_source": selection_source,
+            "routing_reason": routing_reason,
+            "abook_rules_pass": abook_rules_pass,
             "martingale_blocked": martingale_blocked,
             "martingale_status": getattr(martingale_snapshot, "status", "not_loaded") if martingale_snapshot is not None else "not_loaded",
             "martingale_risk_level": martingale_level,
             "martingale_layer_hits": dict(martingale_record.get("layer_hits", {})) if martingale_record else {},
             "martingale_record": dict(martingale_record) if martingale_record else None,
             "validation_status": validation_status,
-            "transition_status": _transition(cohort, validation_status),
+            "transition_status": _transition(book, validation_status),
             "selection": selection,
             "validation": validation,
             "stability": {
@@ -1262,6 +1327,7 @@ def build_two_stage_payload(
             "risk_balance_prev_month": selection["risk_balance_prev_month"],
             "risk_average_open_degree": selection["risk_average_open_degree"],
             "risk_peak_leverage_ratio": selection["risk_peak_leverage_ratio"],
+            "risk_leverage_p95_ratio": selection["risk_leverage_p95_ratio"],
             "risk_balance_status": selection["risk_balance_status"],
             "client_net_pnl": selection["client_net_pnl"],
             "market_pnl": selection["market_pnl"],
@@ -1269,14 +1335,15 @@ def build_two_stage_payload(
             "selection_trade_count": selection["trade_count"],
             "validation_trade_count": validation["trade_count"],
             "average_daily_profit": selection["average_daily_profit"],
+            "max_daily_profit_month_contribution": selection["max_daily_profit_month_contribution"],
             "has_nonzero_pnl": has_nonzero_pnl,
         }
         accounts.append(account)
 
     accounts.sort(key=lambda account: (account["selection_client_net_pnl"], account["platform"], account["login"]), reverse=True)
-    by_cohort = {
-        cohort: [account for account in accounts if account["cohort"] == cohort]
-        for cohort in ("abook_candidate", "bbook_candidate", "observation")
+    by_book = {
+        book: [account for account in accounts if account["book"] == book]
+        for book in ("abook", "bbook")
     }
     daily_book_series = _daily_book_series(
         daily_rows or [],
@@ -1299,14 +1366,11 @@ def build_two_stage_payload(
         "eligible_accounts": unique_accounts,
         "unique_accounts": unique_accounts,
         "account_rows": len(accounts),
-        "abook_candidates": len(by_cohort["abook_candidate"]),
-        "bbook_candidates": len(by_cohort["bbook_candidate"]),
-        "directional_abook_candidates": sum(1 for account in accounts if account["base_cohort"] == "abook_candidate"),
-        "directional_bbook_candidates": sum(1 for account in accounts if account["base_cohort"] == "bbook_candidate"),
-        "observation": len(by_cohort["observation"]),
-        "personal_abook_candidates": sum(1 for account in accounts if account["is_personal_candidate"] and account["cohort"] == "abook_candidate"),
-        "personal_added_abook_candidates": sum(1 for account in accounts if account["is_personal_candidate"] and account["selection_source"] == "personal_candidate_list"),
-        "personal_overlap_abook_candidates": sum(1 for account in accounts if account["is_personal_candidate"] and account["selection_source"] == "rule_and_personal_list"),
+        "abook": len(by_book["abook"]),
+        "bbook": len(by_book["bbook"]),
+        "martingale_bbook": sum(1 for account in by_book["bbook"] if account["martingale_blocked"]),
+        "personal_abook": sum(1 for account in by_book["abook"] if account["is_personal_candidate"]),
+        "personal_bbook_martingale": sum(1 for account in by_book["bbook"] if account["is_personal_candidate"] and account["martingale_blocked"]),
     }
     personal_matched = [account for account in accounts if account["is_personal_candidate"]]
     personal_info.update({
@@ -1315,30 +1379,27 @@ def build_two_stage_payload(
         "overlap_accounts": sum(1 for account in personal_matched if account["selection_source"] == "rule_and_personal_list"),
     })
     stability_overview = {
-        "abook_core": sum(1 for account in accounts if account["base_cohort"] == "abook_candidate" and account["stability"]["tier"] == "core"),
-        "abook_watch": sum(1 for account in accounts if account["base_cohort"] == "abook_candidate" and account["stability"]["tier"] == "watch"),
-        "bbook_core": sum(1 for account in accounts if account["base_cohort"] == "bbook_candidate" and account["stability"]["tier"] == "core"),
-        "bbook_watch": sum(1 for account in accounts if account["base_cohort"] == "bbook_candidate" and account["stability"]["tier"] == "watch"),
+        "abook": len(by_book["abook"]),
+        "bbook": len(by_book["bbook"]),
+        "abook_core": sum(1 for account in by_book["abook"] if account["stability"]["tier"] == "core"),
+        "bbook_martingale": sum(1 for account in by_book["bbook"] if account["martingale_blocked"]),
         "low_confidence": sum(1 for account in accounts if account["confidence_tier"] == "low"),
     }
-    stability_overview["abook_core_or_watch"] = stability_overview["abook_core"] + stability_overview["abook_watch"]
+    stability_overview["abook_core_or_watch"] = stability_overview["abook_core"]
     validation_groups = {
-        cohort: _group_summary(
-            cohort_accounts,
-            "positive" if cohort == "abook_candidate" else "negative" if cohort == "bbook_candidate" else None,
-        )
-        for cohort, cohort_accounts in by_cohort.items()
+        book: _group_summary(book_accounts, "positive" if book == "abook" else "negative")
+        for book, book_accounts in by_book.items()
     }
     active_validation = [account for account in accounts if account["validation"]["trade_count"] > 0]
-    for cohort in ("abook_candidate", "bbook_candidate"):
-        target = "positive" if cohort == "abook_candidate" else "negative"
+    for book in ("abook", "bbook"):
+        target = "positive" if book == "abook" else "negative"
         target_count = sum(
             1 for account in active_validation
             if (account["validation_status"] == "profitable" if target == "positive" else account["validation_status"] == "loss")
         )
-        summary = validation_groups[cohort]
+        summary = validation_groups[book]
         summary["recall"] = _safe_ratio(Decimal(summary["target_successes"]), Decimal(target_count))
-        control_accounts = [account for account in by_cohort["observation"] if account["validation"]["trade_count"] > 0]
+        control_accounts = [account for account in by_book["bbook" if book == "abook" else "abook"] if account["validation"]["trade_count"] > 0]
         control_successes = sum(
             1 for account in control_accounts
             if account["validation_status"] == ("profitable" if target == "positive" else "loss")
@@ -1346,9 +1407,9 @@ def build_two_stage_payload(
         control_rate = _safe_ratio(Decimal(control_successes), Decimal(len(control_accounts)))
         summary["lift"] = _safe_ratio(Decimal(summary["precision"]), Decimal(str(control_rate))) if control_rate else 0.0
 
-    for cohort, summary in validation_groups.items():
+    for book, summary in validation_groups.items():
         summary["max_drawdown"] = float(_daily_group_drawdown(
-            by_cohort[cohort], daily_rows or [], validation_start, validation_end,
+            by_book[book], daily_rows or [], validation_start, validation_end,
         ))
 
     validation_pairs = [
@@ -1378,16 +1439,16 @@ def build_two_stage_payload(
 
     transitions = defaultdict(lambda: defaultdict(int))
     for account in accounts:
-        transitions[account["cohort"]][account["transition_status"]] += 1
+        transitions[account["book"]][account["transition_status"]] += 1
 
     profit_impact = {}
-    for cohort in ("abook_candidate", "bbook_candidate"):
-        cohort_accounts = by_cohort[cohort]
-        selection_market = sum((Decimal(str(account["selection"]["market_pnl"])) for account in cohort_accounts), ZERO)
-        selection_net = sum((Decimal(str(account["selection"]["client_net_pnl"])) for account in cohort_accounts), ZERO)
-        validation_market = sum((Decimal(str(account["validation"]["market_pnl"])) for account in cohort_accounts), ZERO)
-        validation_net = sum((Decimal(str(account["validation"]["client_net_pnl"])) for account in cohort_accounts), ZERO)
-        profit_impact[cohort] = {
+    for book in ("abook", "bbook"):
+        book_accounts = by_book[book]
+        selection_market = sum((Decimal(str(account["selection"]["market_pnl"])) for account in book_accounts), ZERO)
+        selection_net = sum((Decimal(str(account["selection"]["client_net_pnl"])) for account in book_accounts), ZERO)
+        validation_market = sum((Decimal(str(account["validation"]["market_pnl"])) for account in book_accounts), ZERO)
+        validation_net = sum((Decimal(str(account["validation"]["client_net_pnl"])) for account in book_accounts), ZERO)
+        profit_impact[book] = {
             "selection_market_pnl": float(selection_market),
             "selection_client_net_pnl": float(selection_net),
             "current_bbook_market_pnl": float(-selection_market),
@@ -1409,9 +1470,9 @@ def build_two_stage_payload(
     monthly_series = []
     for month in all_months:
         phase = "selection" if month in selection_months else "validation"
-        for cohort, cohort_accounts in by_cohort.items():
+        for book, book_accounts in by_book.items():
             month_rows = []
-            for account in cohort_accounts:
+            for account in book_accounts:
                 source_rows = grouped[(account["platform"], account["login"])]
                 matching = [
                     row for row in source_rows
@@ -1419,12 +1480,12 @@ def build_two_stage_payload(
                     and (row.get("phase") not in {"selection", "validation"} or row.get("phase") == phase)
                 ]
                 month_rows.extend(matching or [_empty_period_row(account, month)])
-            month_metrics = _account_period_metrics(month_rows, cohort_accounts[0] if cohort_accounts else {"platform": "", "login": 0, "account_group": ""}, phase=phase)
+            month_metrics = _account_period_metrics(month_rows, book_accounts[0] if book_accounts else {"platform": "", "login": 0, "account_group": ""}, phase=phase)
             monthly_series.append({
                 "month": month,
                 "phase": phase,
-                "cohort": cohort,
-                "active_accounts": sum(1 for account in cohort_accounts if any(
+                "book": book,
+                "active_accounts": sum(1 for account in book_accounts if any(
                     _month(row["month_start"]) == month and int(row.get("matched_trades", 0) or 0) > 0
                     for row in grouped[(account["platform"], account["login"])]
                 )),
@@ -1462,25 +1523,21 @@ def build_two_stage_payload(
     profit_overview = {
         "monthly": monthly_overview,
         "july_book_split": {
-            "abook": _book_split_summary(by_cohort["abook_candidate"], abook=True),
-            "book": _book_split_summary(
-                [account for account in accounts if account["cohort"] != "abook_candidate"],
-                abook=False,
-            ),
+            "abook": _book_split_summary(by_book["abook"], abook=True),
+            "bbook": _book_split_summary(by_book["bbook"], abook=False),
         },
         "company_profit_definition": "book company profit = - user net trading P&L; Abook assumed company profit = 0",
     }
-    display_bbook_accounts = by_cohort["bbook_candidate"] + by_cohort["observation"]
     book_performance = {
         "selection": {
-            "abook": _book_performance(by_cohort["abook_candidate"], "selection", "abook"),
-            "bbook": _book_performance(display_bbook_accounts, "selection", "bbook"),
+            "abook": _book_performance(by_book["abook"], "selection", "abook"),
+            "bbook": _book_performance(by_book["bbook"], "selection", "bbook"),
         },
         "validation": {
-            "abook": _book_performance(by_cohort["abook_candidate"], "validation", "abook"),
-            "bbook": _book_performance(display_bbook_accounts, "validation", "bbook"),
+            "abook": _book_performance(by_book["abook"], "validation", "abook"),
+            "bbook": _book_performance(by_book["bbook"], "validation", "bbook"),
         },
-        "definition": "Abook theoretical increment = assumed Abook profit - current Bbook profit; displayed Bbook includes Bbook Core and observation accounts; assumed Abook profit is 0 until external execution data is available.",
+        "definition": "Abook shows customer P&L and routing impact separately; Bbook company P&L equals negative customer P&L.",
     }
 
     validation_end_date = date.fromisoformat(validation_end)
@@ -1512,21 +1569,24 @@ def build_two_stage_payload(
     if validation_end_date.day < monthrange(validation_end_date.year, validation_end_date.month)[1]:
         partial_months.add(validation_end[:7])
     misjudge_summary = build_misjudge_summary(accounts)
-    funnel = build_selection_funnel(accounts, unique_accounts)
+    funnel = build_selection_funnel(
+        accounts,
+        unique_accounts,
+        min_trades=min_trades,
+        min_active_days=min_active_days,
+    )
     without_personal_count = sum(
         1 for account in accounts
-        if account.get("base_cohort") == "abook_candidate"
-        and account.get("stability", {}).get("tier") == "core"
+        if account.get("abook_rules_pass")
         and not account.get("martingale_blocked", False)
     )
     with_list_validation_increment = sum(
         float(account.get("validation", {}).get("client_net_pnl", 0.0))
-        for account in by_cohort["abook_candidate"]
+        for account in by_book["abook"]
     )
     without_list_accounts = [
         account for account in accounts
-        if account.get("base_cohort") == "abook_candidate"
-        and account.get("stability", {}).get("tier") == "core"
+        if account.get("abook_rules_pass")
         and not account.get("martingale_blocked", False)
     ]
     without_list_validation_increment = sum(
@@ -1535,9 +1595,9 @@ def build_two_stage_payload(
     )
     personal_candidate_impact = {
         "enabled": bool(personal_info.get("enabled")),
-        "with_list_abook_accounts": len(by_cohort["abook_candidate"]),
+        "with_list_abook_accounts": len(by_book["abook"]),
         "without_list_abook_accounts": without_personal_count,
-        "abook_account_delta": len(by_cohort["abook_candidate"]) - without_personal_count,
+        "abook_account_delta": len(by_book["abook"]) - without_personal_count,
         "with_list_validation_increment": round(with_list_validation_increment, 6),
         "without_list_validation_increment": round(without_list_validation_increment, 6),
         "validation_increment_delta": round(with_list_validation_increment - without_list_validation_increment, 6),
@@ -1573,7 +1633,8 @@ def build_two_stage_payload(
             "min_selection_monthly_consistency": min_selection_monthly_consistency,
             "min_positive_month_rate": min_positive_month_rate,
             "max_top1_day_profit_contribution": max_top1_day_profit_contribution,
-            "max_peak_leverage_ratio": max_peak_leverage_ratio,
+            "max_daily_profit_month_contribution": max_daily_profit_month_contribution,
+            "max_leverage_p95_ratio": max_leverage_p95_ratio,
             "max_high_leverage_holding_seconds": max_high_leverage_holding_seconds,
             "risk_snapshot_status": risk_snapshot_status,
             "min_direction_day_rate_lower_bound": min_direction_day_rate_lower_bound,
@@ -1588,13 +1649,12 @@ def build_two_stage_payload(
             "counts": selection_counts,
             "stability_overview": stability_overview,
             "groups": {
-                cohort: _phase_summary(cohort_accounts, "selection")
-                for cohort, cohort_accounts in by_cohort.items()
+                book: _phase_summary(book_accounts, "selection")
+                for book, book_accounts in by_book.items()
             },
         },
         "validation": {"groups": validation_groups, "diagnostics": validation_diagnostics},
-        "control_group": validation_groups["observation"],
-        "transitions": {cohort: dict(statuses) for cohort, statuses in transitions.items()},
+        "transitions": {book: dict(statuses) for book, statuses in transitions.items()},
         "profit_impact": profit_impact,
         "personal_candidate_list": personal_info,
         "profit_overview": profit_overview,

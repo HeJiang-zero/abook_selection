@@ -54,3 +54,21 @@ def test_snapshot_with_malformed_record_is_invalid(tmp_path):
 
     assert snapshot.status == "invalid"
     assert snapshot.summary()["status"] == "invalid"
+
+
+def test_default_martingale_summary_blocks_all_detected_levels(tmp_path):
+    path = tmp_path / "snapshot.json"
+    records = []
+    for login, level in enumerate(("extreme", "high", "medium", "low"), start=1):
+        records.append({
+            "platform": "mt5", "login": login, "risk_level": level,
+            "layer_hits": {"layer1": True},
+        })
+    path.write_text(json.dumps({
+        "selection_start": "2026-05-01", "selection_end": "2026-06-30",
+        "platforms": ["mt5"], "window_type": "7D_SLIDING", "records": records,
+    }))
+
+    snapshot = load_martingale_snapshot(path, "2026-05-01", "2026-06-30", ["mt5"])
+
+    assert snapshot.summary()["blocked_users"] == 4

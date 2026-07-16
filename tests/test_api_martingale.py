@@ -63,7 +63,7 @@ def test_analysis_reports_martingale_status_and_blocks_personal_candidate(tmp_pa
     body = response.json()
     account = next(item for item in body["accounts"] if item["login"] == 7)
     assert account["selection_source"] == "martingale_blocked"
-    assert account["cohort"] != "abook_candidate"
+    assert account["book"] == "bbook"
     assert body["martingale"]["status"] == "ready"
 
 

@@ -139,7 +139,8 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             min_selection_monthly_consistency=rules.min_selection_monthly_consistency,
             min_positive_month_rate=rules.min_positive_month_rate,
             max_top1_day_profit_contribution=rules.max_top1_day_profit_contribution,
-            max_peak_leverage_ratio=rules.max_peak_leverage_ratio,
+            max_daily_profit_month_contribution=rules.max_daily_profit_month_contribution,
+            max_leverage_p95_ratio=rules.max_leverage_p95_ratio,
             max_high_leverage_holding_seconds=rules.max_high_leverage_holding_seconds,
             risk_snapshot_status=risk_filter.status,
             min_direction_day_rate_lower_bound=rules.min_direction_day_rate_lower_bound,
@@ -261,7 +262,7 @@ def book_analytics(
         abook_keys = {
             (str(account["platform"]), int(account["login"]))
             for account in accounts
-            if account.get("cohort") == "abook_candidate"
+            if account.get("book") == "abook"
         }
         if request.abook_accounts:
             abook_keys = {(item.platform, int(item.login)) for item in request.abook_accounts}

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import clickhouse_connect
 
-from app.config import get_settings
+from app.config import get_settings, load_env_file
 from app.queries import ALLOWED_PLATFORMS
 from app.risk import snapshot_path
 
@@ -51,7 +51,10 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
             mt.platform,
             mt.login,
             toDate(mt.exit_time) AS trade_date,
-            sum(abs(toFloat64(mt.turnover))) AS daily_turnover
+            sum(abs(toFloat64(mt.turnover))) AS daily_turnover,
+            if(any(toFloat64(u.balance_prev_month)) > 0,
+               sum(abs(toFloat64(mt.turnover))) / any(toFloat64(u.balance_prev_month)),
+               NULL) AS daily_leverage_ratio
         FROM risk.dwd_matched_trades AS mt FINAL
         INNER JOIN users AS u ON mt.platform = u.platform AND mt.login = u.login
         WHERE mt.exit_time >= {selection_start:Date}
@@ -73,7 +76,8 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
             login,
             sum(daily_turnover) AS total_turnover,
             count() AS active_days,
-            max(daily_turnover) AS peak_daily_turnover
+            max(daily_turnover) AS peak_daily_turnover,
+            quantileTDigest(0.95)(daily_leverage_ratio) AS leverage_p95_ratio
         FROM daily
         GROUP BY platform, login
     )
@@ -84,6 +88,7 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
         coalesce(a.total_turnover, 0) AS total_turnover,
         coalesce(a.active_days, 0) AS active_days,
         coalesce(a.peak_daily_turnover, 0) AS peak_daily_turnover,
+        coalesce(a.leverage_p95_ratio, 0) AS leverage_p95_ratio,
         coalesce(h.median_holding_seconds, 0) AS median_holding_seconds
     FROM users AS u
     LEFT JOIN aggregates AS a ON u.platform = a.platform AND u.login = a.login
@@ -102,14 +107,17 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
         total_turnover = Decimal(str(row.get("total_turnover") or 0))
         active_days = int(row.get("active_days") or 0)
         peak_daily_turnover = Decimal(str(row.get("peak_daily_turnover") or 0))
+        leverage_p95_ratio = Decimal(str(row.get("leverage_p95_ratio") or 0))
         median_holding_seconds = Decimal(str(row.get("median_holding_seconds") or 0))
         if balance > 0:
             average_open_degree = float(total_turnover / Decimal(active_days) / balance) if active_days else 0.0
             peak_leverage_ratio = float(peak_daily_turnover / balance)
+            leverage_p95 = float(leverage_p95_ratio)
             balance_status = "positive"
         else:
             average_open_degree = None
             peak_leverage_ratio = None
+            leverage_p95 = None
             balance_status = "unknown_nonpositive_balance"
         records.append({
             "platform": str(row["platform"]),
@@ -118,6 +126,7 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
             "balance_prev_month": float(balance),
             "average_open_degree": average_open_degree,
             "peak_leverage_ratio": peak_leverage_ratio,
+            "leverage_p95_ratio": leverage_p95,
             "median_holding_seconds": float(median_holding_seconds),
             "balance_status": balance_status,
         })
@@ -135,6 +144,7 @@ def main() -> None:
     parser.add_argument("--selection-end", default="2026-06-30")
     parser.add_argument("--platform", action="append", dest="platforms")
     args = parser.parse_args()
+    load_env_file()
     platforms = args.platforms or sorted(ALLOWED_PLATFORMS)
     output = snapshot_path()
     output.parent.mkdir(parents=True, exist_ok=True)

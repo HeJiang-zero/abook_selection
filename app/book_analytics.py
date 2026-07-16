@@ -229,7 +229,7 @@ def _turnover_series(turnover_rows: Any, book: str, keys: set[AccountKey]) -> li
 
 
 def _daily_hit_curves(context: AnalysisContext, accounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    books = {_key(account): "abook" if account.get("cohort") == "abook_candidate" else "bbook" for account in accounts}
+    books = {_key(account): account.get("book", "bbook") for account in accounts}
     grouped: dict[date, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: {"active": 0, "hits": 0, "net_pnl": 0.0}))
     for row in context.daily_rows:
         book = books.get(_row_key(row))
@@ -266,7 +266,7 @@ def _company_profit_comparison(
     turnover_by_book: dict[str, list[dict[str, Any]]],
     hedge_cost_bps: float,
 ) -> list[dict[str, Any]]:
-    account_books = {_key(account): "abook" if account.get("cohort") == "abook_candidate" else "bbook" for account in accounts}
+    account_books = {_key(account): account.get("book", "bbook") for account in accounts}
     grouped: dict[date, dict[str, float]] = defaultdict(lambda: {"baseline_user_net_pnl": 0.0, "bbook_user_net_pnl": 0.0})
     rows = context.overview_daily_rows or context.daily_rows
     for row in rows:
@@ -336,7 +336,7 @@ def build_book_analytics(
             "selection_turnover": sum(float(account.get("selection", {}).get("turnover", 0.0)) for account in items),
             "validation_turnover": sum(float(account.get("validation", {}).get("turnover", 0.0)) for account in items),
             "daily_turnover": turnover_by_book[book],
-            "peak_leverage_distribution": [float(account.get("risk_peak_leverage_ratio", account.get("selection", {}).get("risk_peak_leverage_ratio", 0.0)) or 0) for account in items],
+            "leverage_p95_distribution": [float(account.get("risk_leverage_p95_ratio", account.get("selection", {}).get("risk_leverage_p95_ratio", 0.0)) or 0) for account in items],
             "max_exposure_dates": sorted(turnover_by_book[book], key=lambda row: row["turnover"], reverse=True)[:10],
         }
         risk_exposure[book] = exposure
@@ -345,16 +345,16 @@ def build_book_analytics(
     risk_exposure["abook"].update(calculate_hedge_sensitivity(abook, abook_validation_turnover, base_increment, hedge_cost_bps))
     risk_exposure["bbook"]["hedge_cost_bps"] = 0.0
 
-    transitions = Counter((account.get("cohort", "observation"), account.get("validation_status", "no_trade")) for account in accounts)
+    transitions = Counter((account.get("book", "bbook"), account.get("validation_status", "no_trade")) for account in accounts)
     transition_matrix: dict[str, dict[str, int]] = defaultdict(dict)
-    for (cohort, status), count in transitions.items():
-        transition_matrix[cohort][status] = count
+    for (book, status), count in transitions.items():
+        transition_matrix[book][status] = count
     return {
         "pnl_structure": pnl_structure,
         "user_structure": user_structure,
         "risk_exposure": risk_exposure,
         "routing_quality": {
-            "transitions": [{"cohort": cohort, "validation_status": status, "accounts": count} for (cohort, status), count in sorted(transitions.items())],
+            "transitions": [{"book": book, "validation_status": status, "accounts": count} for (book, status), count in sorted(transitions.items())],
             "transition_matrix": dict(transition_matrix),
             "daily_hit_curves": _daily_hit_curves(context, accounts),
             "company_profit_comparison": _company_profit_comparison(context, accounts, turnover_by_book, hedge_cost_bps),
