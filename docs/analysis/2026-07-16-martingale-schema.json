@@ -1,0 +1,306 @@
+{
+  "columns": [
+    {
+      "name": "platform",
+      "type": "LowCardinality(String)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "平台",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "login",
+      "type": "UInt64",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "账号",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "window_type",
+      "type": "String",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "窗口类型",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "window_start",
+      "type": "DateTime",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "窗口开始",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "window_end",
+      "type": "DateTime",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "窗口结束",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "total_sequences",
+      "type": "UInt32",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "检测到的总多笔交易序列数",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "sequence_trade_count",
+      "type": "UInt32",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "属于序列内的交易总笔数",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "sequence_trade_ratio",
+      "type": "Decimal(20, 8)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "sequence_trade_count / total_trades",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "averaging_down_count",
+      "type": "UInt32",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "向下摊平(亏损加仓)的序列数",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "pyramiding_count",
+      "type": "UInt32",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "金字塔加仓(盈利加仓)的序列数",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "averaging_down_ratio",
+      "type": "Decimal(20, 8)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "averaging_down_count / total_sequences",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "pyramiding_ratio",
+      "type": "Decimal(20, 8)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "pyramiding_count / total_sequences",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "avg_sequence_length",
+      "type": "Decimal(20, 4)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "序列中平均交易笔数",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "max_sequence_length",
+      "type": "UInt32",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "最大序列交易笔数",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "min_sequence_length",
+      "type": "UInt32",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "最小序列交易笔数",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "avg_volume_escalation",
+      "type": "Decimal(20, 8)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "序列最后一笔/第一笔交易量的平均放大比例",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "sequence_win_rate",
+      "type": "Decimal(20, 8)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "序列整体结束后胜率",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "sequence_total_profit",
+      "type": "Decimal(24, 8)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "序列交易带来的总利润",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "averaging_down_profit",
+      "type": "Decimal(24, 8)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "向下摊平的序列交易带来的总利润",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "pyramiding_profit",
+      "type": "Decimal(24, 8)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "金字塔加仓的序列交易带来的总利润",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "market_favorable_ratio",
+      "type": "Decimal(20, 8)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "顺应市场动量的序列比例",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "avg_sequence_duration",
+      "type": "Decimal(20, 4)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "序列平均持续时间(秒)",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "min_sequence_duration",
+      "type": "Decimal(20, 4)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "序列最小持续时间(秒)",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "max_sequence_duration",
+      "type": "Decimal(20, 4)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "序列最大持续时间(秒)",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "avg_gap_time",
+      "type": "Decimal(20, 4)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "序列平均间隔时间(秒)",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "min_gap_time",
+      "type": "Decimal(20, 4)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "序列最小间隔时间(秒)",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "max_gap_time",
+      "type": "Decimal(20, 4)",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "序列最大间隔时间(秒)",
+      "codec_expression": "",
+      "ttl_expression": ""
+    },
+    {
+      "name": "computed_at",
+      "type": "DateTime",
+      "default_type": "",
+      "default_expression": "",
+      "comment": "计算时间",
+      "codec_expression": "",
+      "ttl_expression": ""
+    }
+  ],
+  "window_types": [
+    {
+      "window_type": "7D_SLIDING",
+      "rows": 248547,
+      "min_window_start": "2026-05-09 00:00:00",
+      "max_window_end": "2026-07-16 23:59:59"
+    },
+    {
+      "window_type": "CUSTOM",
+      "rows": 810,
+      "min_window_start": "2025-01-28 00:00:00",
+      "max_window_end": "2026-07-16 23:59:59"
+    }
+  ],
+  "coverage": {
+    "min_window_start": "2025-01-28 00:00:00",
+    "max_window_end": "2026-07-16 23:59:59",
+    "rows": 249357
+  },
+  "escalation_bins": [
+    {
+      "bucket": "1.0-1.1",
+      "rows": 123477
+    },
+    {
+      "bucket": "1.1-1.2",
+      "rows": 12336
+    },
+    {
+      "bucket": "1.2-1.3",
+      "rows": 9401
+    },
+    {
+      "bucket": "1.3-1.5",
+      "rows": 10529
+    },
+    {
+      "bucket": "1.5-1.8",
+      "rows": 11757
+    },
+    {
+      "bucket": "<1.0",
+      "rows": 50116
+    },
+    {
+      "bucket": ">=1.8",
+      "rows": 31741
+    }
+  ],
+  "escalation_unit": "multiplier"
+}

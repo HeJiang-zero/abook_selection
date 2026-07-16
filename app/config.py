@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,22 @@ class Settings:
     @property
     def configured(self) -> bool:
         return bool(self.clickhouse_host and self.clickhouse_user and self.clickhouse_password)
+
+
+def load_env_file(path: Path | None = None) -> None:
+    """Load simple KEY=VALUE entries without overriding process environment."""
+    env_path = path or Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if key:
+            os.environ.setdefault(key, value)
 
 
 @lru_cache

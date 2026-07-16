@@ -8,3 +8,5 @@ __pycache__/
 clickhouse.md
 data/user_risk_snapshot.json
 data/user_risk_snapshot.json.tmp
+data/martingale_snapshot.json
+data/martingale_snapshot.json.tmp
