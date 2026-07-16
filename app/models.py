@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, List, Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -113,15 +113,6 @@ class AccountKey(BaseModel):
 
     platform: str
     login: int = Field(ge=0)
-
-
-class SweepRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    analysis: AnalysisRequest
-    grid: dict[str, list[Any]]
-    objective: Literal["validation_increment", "increment_with_cost_cap", "validation_precision"]
-    max_misjudge_cost: Optional[float] = Field(default=None, ge=0)
 
 
 class BookAnalyticsRequest(BaseModel):

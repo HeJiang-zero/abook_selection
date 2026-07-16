@@ -55,7 +55,7 @@ function reset() { request.value.rules = { ...defaultRules }; request.value.pers
 watch(() => request.value.rules, () => { rulesDirty.value = true }, { deep: true })
 onMounted(loadAnalysis)
 const tabs: Array<{ id: Tab; label: string }> = [
-  { id: 'overview', label: '总览' }, { id: 'pnl', label: '盈亏结构' }, { id: 'users', label: '用户结构' },
+  { id: 'overview', label: '总览' }, { id: 'users', label: '用户结构' },
   { id: 'risk', label: '风险敞口' }, { id: 'routing', label: '分流质量' },
 ]
 </script>

@@ -4,11 +4,11 @@
 
 ## 自动化验证
 
-- `.venv/bin/python -m pytest -q`：当前全量测试结果以终端最后一次执行为准；仅有现有 urllib3/LibreSSL warning。
+- `.venv/bin/python -m pytest -q`：92 passed，0 failed；仅有现有 urllib3/LibreSSL warning。
 - `frontend` 使用桌面 Bundled Node 24.14.0 + pnpm 11.7.0 构建：Vite 6.4.3 exit 0。
 - FastAPI `/api/health`：200，返回 `{"status":"ok","service":"abook-dashboard"}`。
 - `/`、`/assets/app.js`、`/assets/styles.css`：均返回 200。
-- 浏览器实际打开 `http://127.0.0.1:8000/`：页面标题、五个 Tab、马丁筛选控件和 Abook/Bbook 分流结果可见；参数寻优窗口已移除；切换 Book Tab 显示懒加载状态。
+- 浏览器实际打开 `http://127.0.0.1:8000/`：页面标题、四个 Tab、马丁筛选控件和 Abook/Bbook 分流结果可见；参数寻优功能已删除；用户结构页显示双纵轴累计客户 P&L 与每日客户 P&L 图表。
 
 ## Phase 0 真实数据
 

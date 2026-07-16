@@ -1,4 +1,4 @@
-export type Tab = 'overview' | 'pnl' | 'users' | 'risk' | 'routing'
+export type Tab = 'overview' | 'users' | 'risk' | 'routing'
 
 export interface RequestModel {
   selection: { start: string; end: string }

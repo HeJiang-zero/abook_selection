@@ -23,7 +23,7 @@ cd ..
 ./run_dashboard.sh
 ```
 
-构建产物输出到 `static/`，FastAPI 通过 `/assets` 托管。页面包含马丁状态与五层明细、误判成本、筛选漏斗、Abook/Bbook 分析和 Abook CSV 导出；参数寻优窗口已移除。
+构建产物输出到 `static/`，FastAPI 通过 `/assets` 托管。页面包含马丁状态与五层明细、误判成本、筛选漏斗、Abook/Bbook 分析和 Abook CSV 导出；用户结构页包含双纵轴累计客户 P&L 与每日客户 P&L 图表，参数寻优功能已删除。
 
 ```bash
 python3 -m venv .venv

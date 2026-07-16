@@ -25,7 +25,7 @@ def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
     app = _source("App.vue")
     sidebar = (FRONTEND / "src" / "components" / "FilterSidebar.vue").read_text()
     assert "总览" in app
-    assert "盈亏结构" in app
+    assert "盈亏结构" not in app
     assert "用户结构" in app
     assert "风险敞口" in app
     assert "分流质量" in app
@@ -58,6 +58,19 @@ def test_frontend_exposes_interactive_sweep_book_metrics_and_account_paging():
         assert metric in books
     for control in ["sortBy", "pageSize", "page"]:
         assert control in accounts
+
+
+def test_user_structure_has_independent_cumulative_and_daily_pnl_charts():
+    books = _source("components/BookPerformance.vue")
+    assert "cumulativeChart" in books
+    assert "dailyChart" in books
+    assert "Abook 累计客户 P&L" in books
+    assert "Bbook 累计客户 P&L" in books
+    assert "Abook 每日客户 P&L" in books
+    assert "Bbook 每日客户 P&L" in books
+    assert "yAxis: [" in books
+    assert "yAxisIndex: 1" in books
+    assert "daily_series" in books
 
 
 def test_frontend_has_martingale_drawer_and_responsive_sidebar_contract():
