@@ -8,11 +8,17 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .martingale import build_martingale_filter, load_martingale_snapshot, snapshot_path
-from .models import AnalysisRequest, FilterOptions
+from .models import AnalysisRequest, FilterOptions, SweepRequest
 from .personal_candidates import load_personal_candidates
 from .repository import ClickHouseRepository, RepositoryConfigurationError
 from .risk import build_local_risk_filter
-from .service import build_account_detail_payload, build_analysis_payload, build_two_stage_payload
+from .service import (
+    build_account_detail_payload,
+    build_analysis_payload,
+    build_two_stage_payload,
+    prepare_analysis_context,
+)
+from .sweep import evaluate_sweep
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -178,6 +184,65 @@ def account_detail(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="ClickHouse account query failed") from exc
+
+
+@app.post("/api/abook/sweep")
+def sweep(request: SweepRequest, repository: ClickHouseRepository = Depends(get_repository)) -> dict:
+    try:
+        analysis_request = request.analysis
+        personal_candidates = load_personal_candidates()
+        personal_candidates_enabled = analysis_request.personal_candidate_list and personal_candidates.status == "ready"
+        personal_candidate_logins = personal_candidates.login_ids if personal_candidates_enabled else frozenset()
+        risk_filter = build_local_risk_filter(analysis_request)
+        martingale_snapshot = build_martingale_filter(analysis_request)
+        effective_request = risk_filter.apply(analysis_request)
+        overview_rows = None
+        overview_daily_rows = None
+        if personal_candidates_enabled or risk_filter.allowed_logins is not None or risk_filter.excluded_logins:
+            overview_rows = repository.fetch_analysis(analysis_request)
+            overview_daily_rows = _fetch_daily_rows(repository, analysis_request)
+        if personal_candidates_enabled:
+            rows = overview_rows or []
+            daily_rows = overview_daily_rows or []
+        elif risk_filter.is_empty_for(analysis_request):
+            rows = []
+            daily_rows = []
+        else:
+            excluded_logins = risk_filter.excluded_logins
+            rows = repository.fetch_analysis(effective_request, excluded_logins=excluded_logins) if excluded_logins else repository.fetch_analysis(effective_request)
+            daily_rows = (
+                _fetch_daily_rows(repository, effective_request, excluded_logins=excluded_logins)
+                if excluded_logins else _fetch_daily_rows(repository, effective_request)
+            )
+        rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(rows))
+        if overview_rows is not None:
+            overview_rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(overview_rows))
+        context = prepare_analysis_context(
+            rows,
+            daily_rows=daily_rows,
+            overview_rows=overview_rows,
+            overview_daily_rows=overview_daily_rows,
+            selection_start=analysis_request.selection.start.isoformat(),
+            selection_end=analysis_request.selection.end.isoformat(),
+            validation_start=analysis_request.validation.start.isoformat(),
+            validation_end=analysis_request.validation.end.isoformat(),
+        )
+        result = evaluate_sweep(
+            context,
+            analysis_request.rules,
+            request.grid,
+            request.objective,
+            request.max_misjudge_cost,
+        )
+        result["martingale"] = martingale_snapshot.summary(analysis_request.rules.excluded_martingale_levels)
+        result["risk_management"] = risk_filter.summary()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RepositoryConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="ClickHouse sweep query failed") from exc
 
 
 if STATIC_DIR.exists():
