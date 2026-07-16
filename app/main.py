@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .martingale import build_martingale_filter, load_martingale_snapshot, snapshot_path
 from .models import AnalysisRequest, FilterOptions
 from .personal_candidates import load_personal_candidates
 from .repository import ClickHouseRepository, RepositoryConfigurationError
@@ -67,6 +68,7 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
         personal_candidates_enabled = request.personal_candidate_list and personal_candidates.status == "ready"
         personal_candidate_logins = personal_candidates.login_ids if personal_candidates_enabled else frozenset()
         risk_filter = build_local_risk_filter(request)
+        martingale_snapshot = build_martingale_filter(request)
         effective_request = risk_filter.apply(request)
         overview_rows = None
         overview_daily_rows = None
@@ -85,7 +87,9 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
         else:
             excluded_logins = risk_filter.excluded_logins
             rows = repository.fetch_analysis(effective_request, excluded_logins=excluded_logins) if excluded_logins else repository.fetch_analysis(effective_request)
-        rows = risk_filter.snapshot.enrich_rows(rows)
+        rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(rows))
+        if overview_rows is not None:
+            overview_rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(overview_rows))
         if request.lookback_months is not None:
             payload = build_analysis_payload(
                 rows,
@@ -94,6 +98,7 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
                 min_avg_daily_profit=request.min_avg_daily_profit if request.min_avg_daily_profit is not None else request.rules.min_avg_daily_profit,
             )
             payload["risk_management"] = risk_filter.summary()
+            payload["martingale"] = martingale_snapshot.summary(request.rules.excluded_martingale_levels)
             return payload
         if personal_candidates_enabled:
             daily_rows = overview_daily_rows or []
@@ -136,8 +141,11 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             personal_candidate_info=(
                 personal_candidates.summary(enabled=request.personal_candidate_list)
             ),
+            martingale_snapshot=martingale_snapshot,
+            excluded_martingale_levels=request.rules.excluded_martingale_levels,
         )
         payload["risk_management"] = risk_filter.summary()
+        payload["martingale"] = martingale_snapshot.summary(request.rules.excluded_martingale_levels)
         return payload
     except RepositoryConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -151,11 +159,19 @@ def account_detail(
     login: int,
     start: str = "2026-05-01",
     end: str = "2026-07-13",
+    selection_start: str = "2026-05-01",
+    selection_end: str = "2026-06-30",
     repository: ClickHouseRepository = Depends(get_repository),
 ) -> dict:
     try:
         rows = repository.fetch_account_detail(platform, login, start, end)
-        return build_account_detail_payload(rows)
+        payload = build_account_detail_payload(rows)
+        snapshot = load_martingale_snapshot(snapshot_path(), selection_start, selection_end, [platform])
+        payload["martingale"] = {
+            **snapshot.summary(),
+            "record": snapshot.indexed_records().get((platform, int(login))) if snapshot.status == "ready" else None,
+        }
+        return payload
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RepositoryConfigurationError as exc:
