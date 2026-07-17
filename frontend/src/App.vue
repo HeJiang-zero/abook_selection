@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { exportAbook, fetchAnalysis, fetchBookAnalytics } from './api'
+import { exportAbook, fetchAnalysis, fetchBookAnalytics, refreshSnapshots } from './api'
 import type { AccountRow, AnalysisPayload, RequestModel, Tab } from './types'
 import FilterSidebar from './components/FilterSidebar.vue'
 import KpiCards from './components/KpiCards.vue'
@@ -13,6 +13,7 @@ import BookPerformance from './components/BookPerformance.vue'
 const defaultRules: Record<string, number | string[]> = {
   min_trades: 20, min_active_days: 10, min_win_rate: 0.5, min_profit_factor: 1,
   min_payoff_ratio: 0.8, min_avg_daily_profit: 0, min_selection_monthly_consistency: 0,
+  min_avg_profit: 0,
   min_positive_month_rate: 0.5, max_top1_day_profit_contribution: 0.2,
   max_daily_profit_month_contribution: 0.6, max_leverage_p95_ratio: 200, max_high_leverage_holding_seconds: 300,
   min_direction_day_rate_lower_bound: 0.55, min_stability_score: 70,
@@ -27,6 +28,8 @@ const data = ref<AnalysisPayload>({ accounts: [] })
 const activeTab = ref<Tab>('overview')
 const loading = ref(false)
 const bookLoading = ref(false)
+const refreshing = ref(false)
+const refreshMessage = ref('')
 const error = ref('')
 const rulesDirty = ref(false)
 const bookData = ref<any | null>(null)
@@ -35,6 +38,21 @@ const selectedAccount = ref<AccountRow | null>(null)
 async function loadAnalysis() {
   loading.value = true; error.value = ''; bookData.value = null
   try { data.value = await fetchAnalysis(request.value); rulesDirty.value = false } catch (err) { error.value = err instanceof Error ? err.message : String(err) } finally { loading.value = false }
+}
+async function refreshAllSnapshots() {
+  refreshing.value = true
+  refreshMessage.value = ''
+  error.value = ''
+  try {
+    const result = await refreshSnapshots(request.value)
+    bookData.value = null
+    refreshMessage.value = `刷新成功：${Object.keys(result.snapshots).length} 个快照已更新，正在重新计算`
+    await loadAnalysis()
+  } catch (err) {
+    refreshMessage.value = `刷新失败：${err instanceof Error ? err.message : String(err)}`
+  } finally {
+    refreshing.value = false
+  }
 }
 async function loadBook() {
   if (bookData.value || bookLoading.value || activeTab.value === 'overview') return
@@ -64,7 +82,7 @@ const tabs: Array<{ id: Tab; label: string }> = [
   <div class="app-shell">
     <header class="topbar"><div><span class="kicker">RISK / A-BOOK ANALYTICS</span><h1>Abook 筛选与 Book 分析</h1><p>筛选期 → 样本外验证 · 马丁排除 · 误判成本量化</p></div><div class="top-actions"><button class="ghost" @click="downloadExport">导出 Abook CSV</button><span class="status-pill" :class="loading ? 'busy' : 'ready'">{{ loading ? '查询中' : '就绪' }}</span></div></header>
     <div class="layout">
-      <FilterSidebar :request="request" :data="data" :loading="loading" :rules-dirty="rulesDirty" @apply="loadAnalysis" @reset="reset" />
+      <FilterSidebar :request="request" :data="data" :loading="loading" :rules-dirty="rulesDirty" :refreshing="refreshing" :refresh-message="refreshMessage" @apply="loadAnalysis" @reset="reset" @refresh="refreshAllSnapshots" />
       <main class="content"><div v-if="error" class="alert error">{{ error }}</div><nav class="tabs"><button v-for="tab in tabs" :key="tab.id" :class="{ active: activeTab === tab.id }" @click="selectTab(tab.id)">{{ tab.label }}</button></nav>
         <template v-if="activeTab === 'overview'"><KpiCards :data="data" /><MisjudgeAnalysis :data="data" /><SelectionFunnel :data="data" /><AccountsTable :accounts="data.accounts || []" @open="selectedAccount = $event" /></template>
         <template v-else><BookPerformance :analytics="bookData" :loading="bookLoading" :active-tab="activeTab" /></template>

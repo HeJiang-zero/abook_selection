@@ -32,7 +32,7 @@ def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
     assert "参数寻优" not in app
     assert "个人候选名单" in sidebar
     assert "马丁" in sidebar
-    for rule in ["min_trades", "min_stability_score", "max_leverage_p95_ratio", "max_daily_profit_month_contribution", "excluded_martingale_levels"]:
+    for rule in ["min_trades", "min_stability_score", "max_leverage_p95_ratio", "max_daily_profit_month_contribution", "min_avg_profit", "excluded_martingale_levels"]:
         assert rule in app or rule in sidebar
 
 
@@ -50,12 +50,14 @@ def test_frontend_uses_new_analysis_actions_and_book_lazy_load():
     assert "AccountDrawer" in app
 
 
-def test_frontend_exposes_interactive_sweep_book_metrics_and_account_paging():
+def test_frontend_exposes_book_metrics_and_account_paging():
     books = (FRONTEND / "src" / "components" / "BookPerformance.vue").read_text()
     accounts = (FRONTEND / "src" / "components" / "AccountsTable.vue").read_text()
     assert "Core + observation" not in books
-    for metric in ["max_drawdown", "symbol_heatmap", "daily_turnover", "company_profit_comparison"]:
+    for metric in ["max_drawdown", "symbol_heatmap", "company_profit_comparison", "monthly", "distribution", "style_breakdown", "top_accounts"]:
         assert metric in books
+    assert "daily_turnover" not in books
+    assert "Turnover" not in books
     for control in ["sortBy", "pageSize", "page"]:
         assert control in accounts
 
@@ -70,6 +72,8 @@ def test_user_structure_has_independent_cumulative_and_daily_pnl_charts():
     assert "Bbook 每日客户 P&L" in books
     assert "yAxis: [" in books
     assert "yAxisIndex: 1" in books
+    assert books.count("yAxis: [") >= 2
+    assert "Abook 每日客户 P&L" in books and "Bbook 每日客户 P&L" in books
     assert "daily_series" in books
 
 
@@ -80,3 +84,15 @@ def test_frontend_has_martingale_drawer_and_responsive_sidebar_contract():
     assert "martingale_risk_level" in drawer
     assert "max-height: calc(100vh - 36px)" in css
     assert "overflow-y: auto" in css
+
+
+def test_frontend_exposes_refresh_all_data_button_and_request_contract():
+    sidebar = (ROOT / "frontend/src/components/FilterSidebar.vue").read_text()
+    api = (ROOT / "frontend/src/api.ts").read_text()
+    app = (ROOT / "frontend/src/App.vue").read_text()
+
+    assert "刷新全部数据" in sidebar
+    assert "refreshSnapshots" in api
+    assert "refresh-snapshots" in api
+    assert "refreshing" in app
+    assert "bookData.value = null" in app

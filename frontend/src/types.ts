@@ -28,6 +28,30 @@ export interface AccountRow {
   martingale_layer_hits?: Record<string, boolean>
 }
 
+export interface BookAnalyticsPayload {
+  user_structure?: {
+    daily_book_series?: Array<Record<string, any>>
+    [key: string]: any
+  }
+  pnl_structure?: Record<'abook' | 'bbook', Record<string, any>>
+  risk_exposure?: Record<string, any>
+  routing_quality?: Record<string, any>
+  [key: string]: any
+}
+
+export interface SnapshotRefreshResponse {
+  status: string
+  selection_start: string
+  selection_end: string
+  snapshots: Record<string, {
+    status: string
+    path: string
+    records: number
+    selection_start: string
+    selection_end: string
+  }>
+}
+
 export interface AnalysisPayload {
   selection?: { counts: Record<string, number>; groups: Record<string, unknown> }
   validation?: { groups: Record<string, any>; diagnostics: Record<string, any> }
@@ -39,5 +63,6 @@ export interface AnalysisPayload {
   martingale?: Record<string, any>
   accounts?: AccountRow[]
   daily_book_series?: any[]
+  avg_profit?: Record<string, any>
   [key: string]: any
 }
