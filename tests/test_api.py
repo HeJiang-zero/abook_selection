@@ -99,3 +99,45 @@ def test_analysis_returns_two_stage_payload_for_new_request():
     assert body["rules"]["min_stability_score"] == 72
     assert body["rules"]["max_top1_day_profit_contribution"] == 0.4
     assert "daily_book_series" in body
+
+
+def test_refresh_snapshots_endpoint_passes_selection_and_platforms(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "app.main.refresh_snapshots",
+        lambda start, end, platforms: calls.append((start, end, platforms))
+        or {"status": "ready", "snapshots": {}},
+    )
+
+    response = client.post(
+        "/api/abook/refresh-snapshots",
+        json={
+            "selection": {"start": "2026-05-01", "end": "2026-06-30"},
+            "platforms": ["mt5", "hh_mt5"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls == [("2026-05-01", "2026-06-30", ["hh_mt5", "mt5"])]
+
+
+def test_refresh_snapshots_endpoint_reports_refresh_failure(monkeypatch):
+    monkeypatch.setattr(
+        "app.main.refresh_snapshots",
+        lambda *args: {
+            "status": "error",
+            "error": "source unavailable",
+            "snapshots": {},
+        },
+    )
+
+    response = client.post(
+        "/api/abook/refresh-snapshots",
+        json={
+            "selection": {"start": "2026-05-01", "end": "2026-06-30"},
+            "platforms": ["mt5"],
+        },
+    )
+
+    assert response.status_code == 502
+    assert "source unavailable" in response.json()["detail"]

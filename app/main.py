@@ -9,11 +9,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .martingale import build_martingale_filter, load_martingale_snapshot, snapshot_path
+from .avg_profit import build_avg_profit_filter
 from .book_analytics import build_book_analytics
 from .exports import render_abook_csv
-from .models import AnalysisRequest, BookAnalyticsRequest, FilterOptions
+from .models import AnalysisRequest, BookAnalyticsRequest, FilterOptions, SnapshotRefreshRequest
 from .personal_candidates import load_personal_candidates
 from .repository import ClickHouseRepository, RepositoryConfigurationError
+from .snapshot_refresh import refresh_snapshots
 from .risk import build_local_risk_filter
 from .service import (
     build_account_detail_payload,
@@ -59,6 +61,21 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "abook-dashboard"}
 
 
+@app.post("/api/abook/refresh-snapshots")
+def refresh_snapshot_files(request: SnapshotRefreshRequest) -> dict:
+    result = refresh_snapshots(
+        request.selection.start.isoformat(),
+        request.selection.end.isoformat(),
+        request.platforms,
+    )
+    if result.get("status") != "ready":
+        raise HTTPException(
+            status_code=502,
+            detail=str(result.get("error", "snapshot refresh failed")),
+        )
+    return result
+
+
 @app.get("/api/abook/filters", response_model=FilterOptions)
 def filter_options(repository: ClickHouseRepository = Depends(get_repository)) -> dict[str, list[str]]:
     try:
@@ -73,6 +90,7 @@ def filter_options(repository: ClickHouseRepository = Depends(get_repository)) -
 def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depends(get_repository)) -> dict:
     try:
         personal_candidates = load_personal_candidates()
+        avg_profit_snapshot = build_avg_profit_filter(request)
         personal_candidates_enabled = request.personal_candidate_list and personal_candidates.status == "ready"
         personal_candidate_logins = personal_candidates.login_ids if personal_candidates_enabled else frozenset()
         risk_filter = build_local_risk_filter(request)
@@ -96,8 +114,10 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             excluded_logins = risk_filter.excluded_logins
             rows = repository.fetch_analysis(effective_request, excluded_logins=excluded_logins) if excluded_logins else repository.fetch_analysis(effective_request)
         rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(rows))
+        rows = avg_profit_snapshot.enrich_rows(rows)
         if overview_rows is not None:
             overview_rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(overview_rows))
+            overview_rows = avg_profit_snapshot.enrich_rows(overview_rows)
         if request.lookback_months is not None:
             payload = build_analysis_payload(
                 rows,
@@ -107,6 +127,7 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             )
             payload["risk_management"] = risk_filter.summary()
             payload["martingale"] = martingale_snapshot.summary(request.rules.excluded_martingale_levels)
+            payload["avg_profit"] = avg_profit_snapshot.summary()
             return payload
         if personal_candidates_enabled:
             daily_rows = overview_daily_rows or []
@@ -135,6 +156,7 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             min_profit_factor=rules.min_profit_factor,
             min_payoff_ratio=rules.min_payoff_ratio,
             min_avg_daily_profit=rules.min_avg_daily_profit,
+            min_avg_profit=rules.min_avg_profit,
             min_selection_monthly_consistency=rules.min_selection_monthly_consistency,
             min_positive_month_rate=rules.min_positive_month_rate,
             max_top1_day_profit_contribution=rules.max_top1_day_profit_contribution,
@@ -152,9 +174,11 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             ),
             martingale_snapshot=martingale_snapshot,
             excluded_martingale_levels=request.rules.excluded_martingale_levels,
+            avg_profit_snapshot_status=avg_profit_snapshot.status,
         )
         payload["risk_management"] = risk_filter.summary()
         payload["martingale"] = martingale_snapshot.summary(request.rules.excluded_martingale_levels)
+        payload["avg_profit"] = avg_profit_snapshot.summary()
         return payload
     except RepositoryConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -206,14 +230,9 @@ def book_analytics(
             abook_keys = {(item.platform, int(item.login)) for item in request.abook_accounts}
         daily_rows = _fetch_daily_rows(repository, request.analysis)
         symbol_method = getattr(repository, "fetch_book_symbol_rows", None)
-        turnover_method = getattr(repository, "fetch_daily_turnover_rows", None)
         symbol_rows = {
             "population": symbol_method(request.analysis) if callable(symbol_method) else [],
             "abook": symbol_method(request.analysis, account_keys=abook_keys) if callable(symbol_method) else [],
-        }
-        turnover_rows = {
-            "population": turnover_method(request.analysis) if callable(turnover_method) else [],
-            "abook": turnover_method(request.analysis, account_keys=abook_keys) if callable(turnover_method) else [],
         }
         context = prepare_analysis_context(
             [], daily_rows=daily_rows, overview_daily_rows=daily_rows,
@@ -222,9 +241,7 @@ def book_analytics(
             validation_start=request.analysis.validation.start.isoformat(),
             validation_end=request.analysis.validation.end.isoformat(),
         )
-        result = build_book_analytics(
-            context, accounts, abook_keys, request.hedge_cost_bps, symbol_rows, turnover_rows,
-        )
+        result = build_book_analytics(context, accounts, abook_keys, symbol_rows)
         result["coverage"] = analysis_payload.get("coverage", {})
         result["book_counts"] = {
             "population": len(accounts),
