@@ -44,6 +44,15 @@ def test_analysis_query_does_not_reintroduce_runtime_position_proxy():
     assert "max_top_day_concentration" not in query
 
 
+def test_analysis_query_does_not_compute_turnover():
+    query, _ = build_analysis_query(
+        platforms=["mt5"], start="2026-05-01", end="2026-07-13", lookback_months=3,
+        filters={},
+    )
+
+    assert "turnover" not in query.lower()
+
+
 def test_analysis_query_embeds_large_local_login_list_to_avoid_http_url_414():
     logins = list(range(3000))
     query, params = build_analysis_query(
@@ -195,3 +204,29 @@ def test_account_detail_query_always_filters_demo_and_test_accounts():
     assert "risk.ods_mt5_users AS u FINAL" in query
     assert "positionCaseInsensitive(u.`group`, 'test') = 0" in query
     assert "positionCaseInsensitive(u.`group`, 'demo') = 0" in query
+
+
+def test_analysis_and_daily_queries_include_validation_end_2026_07_16():
+    analysis_query, analysis_params = build_analysis_query(
+        platforms=["mt5"],
+        start="2026-05-01",
+        end="2026-07-16",
+        lookback_months=3,
+        filters={},
+        selection_start="2026-05-01",
+        selection_end="2026-06-30",
+        validation_start="2026-07-01",
+        validation_end="2026-07-16",
+    )
+    daily_query, daily_params = build_daily_pnl_query(
+        platforms=["mt5"],
+        start="2026-05-01",
+        end="2026-07-16",
+        filters={},
+    )
+
+    assert analysis_params["end_exclusive"] == "2026-07-17"
+    assert analysis_params["validation_end_exclusive"] == "2026-07-17"
+    assert daily_params["end_exclusive"] == "2026-07-17"
+    assert "{validation_end_exclusive:Date}" in analysis_query
+    assert "{end_exclusive:Date}" in daily_query

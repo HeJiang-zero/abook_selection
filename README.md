@@ -34,7 +34,7 @@ cd /Users/jianghe/abook_hedging && ./run_dashboard.sh
 首次运行前，把本地 ClickHouse 配置写入被 Git 忽略的 `.env`（可参考 `.env.example`）。脚本会自动加载 `.env` 并启动服务。
 打开 http://localhost:8000。生产环境请使用只读 ClickHouse 账号，并通过密钥管理注入 `CLICKHOUSE_PASSWORD`。
 
-默认筛选规则为：Abook 满足交易笔数 `>= 20`、活跃交易天数 `>= 10`、胜率 `>= 50%`、`Profit Factor > 1`、盈亏比 `>= 0.8`、平均交易日净利润 `> 0 USD`、盈利月份占比 `>= 50%`、日盈利率 95% 下限 `>= 55%`、稳定性评分 `>= 70`、Top1 日利润贡献率 `< 20%`、单日最大盈利占当月利润占比 `<= 60%`、用户杠杆率 P95 `<= 200`。单日/月度利润占比按每个筛选月份分别计算，取最差月份。所有命中马丁等级（low/medium/high/extreme）的用户直接进入 Bbook，其他未通过 Abook 的账户也统一进入 Bbook。平均交易日利润定义为：阶段内用户净交易 P&L（`profit + storage + commission + fee`，仅 `action IN (0,1)`）除以有交易的自然日数量。账户没有亏损交易时，PF 在筛选上视为无穷大，API 中以 `null` 表示，避免 JSON 非法数值。
+默认筛选规则为：Abook 满足交易笔数 `>= 20`、活跃交易天数 `>= 10`、胜率 `>= 50%`、`Profit Factor > 1`、盈亏比 `>= 0.8`、平均交易日净利润 `> 0 USD`、`avg_profit > min_avg_profit`（默认 0，数据来自本地平均盈利快照）、盈利月份占比 `>= 50%`、日盈利率 95% 下限 `>= 55%`、稳定性评分 `>= 70`、Top1 日利润贡献率 `< 20%`、单日最大盈利占当月利润占比 `<= 60%`、用户杠杆率 P95 `<= 200`。单日/月度利润占比按每个筛选月份分别计算，取最差月份。所有命中马丁等级（low/medium/high/extreme）的用户直接进入 Bbook，其他未通过 Abook 的账户也统一进入 Bbook。平均交易日利润定义为：阶段内用户净交易 P&L（`profit + storage + commission + fee`，仅 `action IN (0,1)`）除以有交易的自然日数量；`avg_profit` 快照使用 `risk.dws_account_daily_window` 的 `CUSTOM` 每日 `daily_profit`，按用户和交易日去重后只对有交易日求均值，排除 `7D_SLIDING` 滚动窗口。账户没有亏损交易时，PF 在筛选上视为无穷大，API 中以 `null` 表示，避免 JSON 非法数值。
 
 账户组中不区分大小写包含 `test` 或 `demo` 的账户是测试账号，所有查询、服务层聚合和账户详情都会硬性排除。7 月验证阶段会保留没有交易的筛选账户，并标记为“无交易”。
 
@@ -62,6 +62,7 @@ cd /Users/jianghe/abook_hedging && ./run_dashboard.sh
     "min_profit_factor": 1,
     "min_payoff_ratio": 0.8,
     "min_avg_daily_profit": 0,
+    "min_avg_profit": 0,
     "min_positive_month_rate": 0.5,
     "max_top1_day_profit_contribution": 0.2,
     "max_daily_profit_month_contribution": 0.6,
@@ -75,11 +76,11 @@ cd /Users/jianghe/abook_hedging && ./run_dashboard.sh
 
 所有分析查询均使用 `FINAL`，并过滤 `is_deleted = 0`。查询会为用户生成完整的月份网格，因此验证期没有交易的账户仍会返回。交易 P&L 只计算 `action IN (0,1)`；`action IN (2,3)` 的资金/信用流水单独返回。页面中的统一 `market_pnl`、毛盈亏和 PF 均以 Deals 聚合口径为准；撮合表的 `matched_market_pnl` 仅作为对账字段保留。理论镜像收益与客户净交易 P&L 分开返回。
 
-当前 Abook 利润影响是理论估算：假设进入 Abook 后交易所的对手盘利润为 0，因此迁移增量为用户净交易 P&L；不包含真实外部成交、点差、对冲成本、滑点和流动性成本。
+当前 Abook 利润影响是理论估算：假设进入 Abook 后交易所的对手盘利润为 0，因此迁移增量为用户净交易 P&L；不包含真实外部成交、点差、对冲成本、滑点和流动性成本。平均盈利快照只参与 Abook 资格判断；低于阈值的用户不会从人口中删除，而是进入 Bbook，保证所有用户只有 Abook/Bbook 两种归属。
 
 页面的符号口径固定为：customer_net_pnl 是客户净交易 P&L，不代表公司利润；留在 Bbook 时公司利润为客户净交易 P&L 取负；Abook 用户的正负只用于命中、误判和样本外验证，不能直接当作公司盈亏。Bbook “漏网”只统计最终进入 Bbook 但验证期转正的用户，公司损失为负值；总额按全部漏网账户计算，页面名单默认只显示金额大于 100 的账户。
 
-volume 沿用 dwd_matched_trades.volume 原始单位；不同品种可能有不同交易量精度（例如外汇数据可出现 1000），不能直接当作统一“手数”。turnover 是交易名义金额风险代理，也不是公司利润，页面单独标注。
+volume 沿用 dwd_matched_trades.volume 原始单位；不同品种可能有不同交易量精度（例如外汇数据可出现 1000），不能直接当作统一“手数”。Book 分析页面不统计或展示 turnover；风险快照内部仍可使用原始交易名义金额计算杠杆 P95，但不把它当作公司利润。
 
 ## 本地风险快照
 
@@ -87,7 +88,12 @@ volume 沿用 dwd_matched_trades.volume 原始单位；不同品种可能有不�
 
 ```bash
 .venv/bin/python scripts/build_user_risk_snapshot.py --selection-start 2026-05-01 --selection-end 2026-06-30
+
+# 平均盈利快照（首次或日期范围变化时运行；运行网页时只读取本地 JSON）
+.venv/bin/python scripts/build_avg_profit_snapshot.py --selection-start 2026-05-01 --selection-end 2026-06-30
 ```
+
+页面左侧“刷新全部数据”会按当前筛选期和平台重建风险、平均盈利、马丁三个本地快照。三个快照全部成功后页面会自动重新计算；验证期结束日仍由页面日期控制。例如验证结束日设为 `2026-07-16`，主查询会读取至 7 月 16 日（排他上界为 2026-07-17）。如果 ClickHouse 尚未落库 7 月 16 日数据，覆盖信息会反映实际可用范围。
 
 快照默认写入 `data/user_risk_snapshot.json`，也可用 `ABOOK_RISK_SNAPSHOT_PATH` 覆盖路径。快照使用 matched trades 的 `turnover` 计算平均开仓程度和用户杠杆率 P95，并记录筛选期中位持仓秒数。杠杆率定义为每日交易名义金额 / `balance_prev_month`，P95 用于筛选，峰值只作为审计字段；`balance_prev_month <= 0` 的用户不计算杠杆率。SQL 会排除 group 中大小写不敏感包含 `test` 或 `demo` 的账户，例如 `real\\FPlive\\TEST_USD_ZO_BA_NT_H`、`demo\\HHdemo\\forexhh-USD`。该本地文件不会提交到 GitHub。
 
