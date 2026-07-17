@@ -26,6 +26,21 @@ class AnalysisPeriod(BaseModel):
         return self
 
 
+class SnapshotRefreshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selection: AnalysisPeriod
+    platforms: List[str]
+
+    @field_validator("platforms")
+    @classmethod
+    def validate_platforms(cls, value: List[str]) -> List[str]:
+        allowed = {"mt5", "hh_mt5"}
+        if not value or set(value) - allowed:
+            raise ValueError("platforms must contain only mt5 or hh_mt5")
+        return sorted(set(value))
+
+
 class AnalysisRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -35,6 +50,7 @@ class AnalysisRules(BaseModel):
     min_profit_factor: float = Field(default=1.0, ge=0)
     min_payoff_ratio: float = Field(default=0.8, ge=0)
     min_avg_daily_profit: float = Field(default=0.0, ge=0)
+    min_avg_profit: float = Field(default=0.0, ge=0)
     min_selection_monthly_consistency: float = Field(default=0.0, ge=0, le=1)
     min_positive_month_rate: float = Field(default=0.5, ge=0, le=1)
     max_top1_day_profit_contribution: float = Field(default=0.2, gt=0, le=1)
@@ -120,4 +136,3 @@ class BookAnalyticsRequest(BaseModel):
 
     analysis: AnalysisRequest
     abook_accounts: List[AccountKey] = Field(default_factory=list)
-    hedge_cost_bps: float = Field(default=0.0, ge=0, le=5)
