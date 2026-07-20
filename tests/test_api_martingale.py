@@ -35,6 +35,9 @@ def test_analysis_reports_martingale_status_and_blocks_personal_candidate(tmp_pa
         "selection_start": "2026-05-01", "selection_end": "2026-06-30",
         "platforms": ["mt5"], "window_type": "7D_SLIDING",
         "records": [{"platform": "mt5", "login": 7, "risk_level": "high",
+                      "martingale_detection_status": "confirmed",
+                      "confirmed_windows": 2, "confirmed_extreme_windows": 0,
+                      "expanded_windows": 0,
                       "layer_hits": {"layer1": True, "layer2": True}}],
     }))
     monkeypatch.setenv("ABOOK_MARTINGALE_SNAPSHOT_PATH", str(snapshot_path))
@@ -67,12 +70,56 @@ def test_analysis_reports_martingale_status_and_blocks_personal_candidate(tmp_pa
     assert body["martingale"]["status"] == "ready"
 
 
+def test_suspected_martingale_does_not_override_personal_abook_candidate(tmp_path, monkeypatch):
+    snapshot_path = tmp_path / "snapshot.json"
+    snapshot_path.write_text(json.dumps({
+        "selection_start": "2026-05-01", "selection_end": "2026-06-30",
+        "platforms": ["mt5"], "window_type": "7D_SLIDING",
+        "records": [{"platform": "mt5", "login": 7, "risk_level": "extreme",
+                      "martingale_detection_status": "suspected",
+                      "confirmed_windows": 1, "confirmed_extreme_windows": 1,
+                      "expanded_windows": 1,
+                      "layer_hits": {"layer1": True, "layer3": True}}],
+    }))
+    monkeypatch.setenv("ABOOK_MARTINGALE_SNAPSHOT_PATH", str(snapshot_path))
+    monkeypatch.setattr(
+        "app.main.load_personal_candidates",
+        lambda: PersonalCandidateList(tmp_path / "candidates.csv", "ready", frozenset({7})),
+    )
+
+    class FakeRepository:
+        def fetch_analysis(self, request, excluded_logins=None):
+            return [_row("2026-05-01", 120), _row("2026-06-01", 100), _row("2026-07-01", 80)]
+
+        def fetch_daily_pnl(self, request, excluded_logins=None):
+            return []
+
+    app.dependency_overrides[get_repository] = lambda: FakeRepository()
+    try:
+        response = TestClient(app).post(
+            "/api/abook/analysis",
+            json={"platforms": ["mt5"], "personal_candidate_list": True},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    account = next(item for item in response.json()["accounts"] if item["login"] == 7)
+    assert account["martingale_detection_status"] == "suspected"
+    assert account["martingale_blocked"] is False
+    assert account["martingale_hard_block"] is False
+    assert account["book"] == "abook"
+
+
 def test_account_detail_includes_martingale_record(tmp_path, monkeypatch):
     snapshot_path = tmp_path / "snapshot.json"
     snapshot_path.write_text(json.dumps({
         "selection_start": "2026-05-01", "selection_end": "2026-06-30",
         "platforms": ["mt5"], "window_type": "7D_SLIDING",
         "records": [{"platform": "mt5", "login": 7, "risk_level": "extreme",
+                      "martingale_detection_status": "confirmed",
+                      "confirmed_windows": 2, "confirmed_extreme_windows": 2,
+                      "expanded_windows": 0,
                       "layer_hits": {"layer1": True, "layer5": True}}],
     }))
     monkeypatch.setenv("ABOOK_MARTINGALE_SNAPSHOT_PATH", str(snapshot_path))

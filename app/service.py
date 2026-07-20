@@ -9,6 +9,8 @@ import math
 from typing import Any, Iterable, Optional
 
 from .metrics import calculate_drawdown
+from .account_detail import build_account_detail_metrics, summarize_markout_rows
+from .r4 import R4_MIN_PRIMARY_TRADES, R4_MIN_TRADES, R4_PRIMARY_TRADE_PCT, R4_WIN_RATE
 
 
 ZERO = Decimal("0")
@@ -293,7 +295,6 @@ def build_analysis_payload(
     accounts = [
         account for account in accounts
         if (account["profit_factor"] is None or account["profit_factor"] > min_profit_factor)
-        and account["average_daily_profit"] > min_avg_daily_profit
     ]
     accounts.sort(key=lambda item: (item["client_net_pnl"], item["platform"], item["login"]), reverse=True)
     eligible_keys = {(account["platform"], account["login"]) for account in accounts}
@@ -354,8 +355,8 @@ def build_analysis_payload(
         "lookback_months": lookback_months,
         "strategy_filters": {
             "profit_factor_gt": min_profit_factor,
-            "average_daily_profit_gt": min_avg_daily_profit,
-            "average_daily_profit_definition": "total user net trading P&L / active trading days",
+            "average_daily_profit_gt": None,
+            "average_daily_profit_definition": "not used for routing",
         },
         "kpis": kpis,
         "monthly_series": monthly_series,
@@ -363,7 +364,7 @@ def build_analysis_payload(
     }
 
 
-def build_account_detail_payload(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+def build_account_detail_payload(rows: Iterable[dict[str, Any]], markout_rows: Iterable[dict[str, Any]] | None = None) -> dict[str, Any]:
     materialized = list(rows)
     symbols: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in materialized:
@@ -380,7 +381,11 @@ def build_account_detail_payload(rows: Iterable[dict[str, Any]]) -> dict[str, An
             "avg_holding_seconds": _ratio(_sum(items, "holding_seconds"), Decimal(len(items))),
         })
     symbol_rows.sort(key=lambda item: item["profit"], reverse=True)
-    return {"trades": [_json_row(row) for row in materialized], "symbols": symbol_rows}
+    return {
+        "symbols": symbol_rows,
+        **build_account_detail_metrics(materialized),
+        "markout": summarize_markout_rows(markout_rows or []),
+    }
 
 
 def _json_value(value: Any) -> Any:
@@ -610,13 +615,11 @@ def _stability_assessment(
     confidence_tier = "low"
     if (
         selection["trade_count"] >= high_confidence_trades
-        and selection["daily_active_days"] >= high_confidence_days
         and selection["active_months"] >= 2
     ):
         confidence_tier = "high"
     elif (
         selection["trade_count"] >= min_trades
-        and selection["daily_active_days"] >= min_active_days
         and selection["active_months"] >= 2
     ):
         confidence_tier = "medium"
@@ -664,7 +667,7 @@ def _stability_assessment(
     if direction in {"positive", "negative"}:
         drawdown_component = min(1.0, return_drawdown) if selection["max_drawdown"] > 0 else 1.0
         score = (
-            (20.0 if selection["trade_count"] >= min_trades and selection["daily_active_days"] >= min_active_days else 0.0)
+            (20.0 if selection["trade_count"] >= min_trades else 0.0)
             + 25.0 * min(1.0, direction_month_rate)
             + 25.0 * min(1.0, direction_day_rate)
             + 15.0 * max(0.0, 1.0 - min(1.0, concentration))
@@ -739,6 +742,7 @@ def classify_accounts(
     personal_candidate_logins: set[int] | None = None,
     martingale_snapshot: Any | None = None,
     avg_profit_snapshot_status: str = "not_loaded",
+    news_candidate_logins: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Classify a materialized context without issuing another data query."""
     payload = build_two_stage_payload(
@@ -768,9 +772,13 @@ def classify_accounts(
         high_confidence_trades=rules.high_confidence_trades,
         high_confidence_days=rules.high_confidence_days,
         personal_candidate_logins=personal_candidate_logins,
+        news_candidate_logins=news_candidate_logins,
         martingale_snapshot=martingale_snapshot,
         excluded_martingale_levels=rules.excluded_martingale_levels,
         avg_profit_snapshot_status=avg_profit_snapshot_status,
+        require_selection_monthly_positive=rules.require_selection_monthly_positive,
+        enable_r4=rules.enable_r4,
+        r4_min_passing_weeks=rules.r4_min_passing_weeks,
     )
     return payload["accounts"]
 
@@ -892,11 +900,20 @@ def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
             ),
             0.0,
         )
+        may_pnl = next(
+            (
+                float(month.get("client_net_pnl", 0.0) or 0.0)
+                for month in account.get("monthly", [])
+                if str(month.get("month")) == "2026-05"
+            ),
+            0.0,
+        )
         item = {
             "platform": account["platform"],
             "login": int(account["login"]),
             "account_group": account.get("account_group", ""),
             "selection_client_net_pnl": float(account.get("selection", {}).get("client_net_pnl", account.get("selection_client_net_pnl", 0.0))),
+            "may_client_net_pnl": may_pnl,
             "june_client_net_pnl": june_pnl,
             "validation_client_net_pnl": validation_pnl,
             "selection_source": account.get("selection_source", ""),
@@ -934,9 +951,8 @@ def build_selection_funnel(
     min_active_days: int | None = None,
 ) -> dict[str, Any]:
     all_accounts = list(accounts)
-    has_explicit_sample_rule = min_trades is not None or min_active_days is not None
+    has_explicit_sample_rule = min_trades is not None
     required_trades = int(min_trades or 0)
-    required_active_days = int(min_active_days or 0)
     stages = [
         ("eligible", lambda account: True, "not_in_query_population"),
         (
@@ -944,18 +960,14 @@ def build_selection_funnel(
             (
                 lambda account: (
                     account.get("selection", {}).get("trade_count", 0) >= required_trades
-                    and account.get("selection", {}).get("active_trade_days", 0) >= required_active_days
                 )
                 if has_explicit_sample_rule
                 else (
                     account.get("selection", {}).get("trade_count", 0) > 0
-                    and account.get("selection", {}).get("active_trade_days", 0) > 0
                 )
             ),
             "insufficient_sample",
         ),
-        ("positive_direction", lambda account: account.get("selection_direction") == "positive", "no_positive_direction"),
-        ("stability_core", lambda account: account.get("stability", {}).get("tier") == "core", "stability_watch"),
         ("leverage_passed", lambda account: "leverage_p95_ratio" not in account.get("selection_flags", []), "leverage_p95_ratio"),
         ("non_martingale", lambda account: not account.get("martingale_blocked", False), "martingale_blocked"),
         ("abook", lambda account: account.get("book") == "abook", "abook_rules_failed"),
@@ -1158,18 +1170,18 @@ def build_two_stage_payload(
     selection_end: str,
     validation_start: str,
     validation_end: str,
-    min_trades: int = 20,
-    min_active_days: int = 10,
+    min_trades: int = 75,
+    min_active_days: int = 0,
     min_win_rate: float = 0.5,
-    min_profit_factor: float = 1.0,
-    min_payoff_ratio: float = 0.8,
+    min_profit_factor: float = 1.25,
+    min_payoff_ratio: float = 0.4,
     min_avg_daily_profit: float = 0.0,
     min_avg_profit: float = 0.0,
     min_selection_monthly_consistency: float = 0.0,
     min_positive_month_rate: float = 0.5,
-    max_top1_day_profit_contribution: float = 0.2,
+    max_top1_day_profit_contribution: float = 0.3,
     max_daily_profit_month_contribution: float = 1.0,
-    max_leverage_p95_ratio: float = 200.0,
+    max_leverage_p95_ratio: float = 5000.0,
     max_peak_leverage_ratio: float | None = None,
     max_high_leverage_holding_seconds: float = 300.0,
     risk_snapshot_status: str = "not_loaded",
@@ -1179,12 +1191,17 @@ def build_two_stage_payload(
     high_confidence_days: int = 30,
     personal_candidate_logins: set[int] | None = None,
     personal_candidate_info: dict[str, Any] | None = None,
+    news_candidate_logins: set[int] | None = None,
+    news_candidate_info: dict[str, Any] | None = None,
     martingale_snapshot: Any | None = None,
     excluded_martingale_levels: Iterable[str] = ("extreme", "high", "medium", "low"),
     avg_profit_snapshot_status: str = "not_loaded",
+    require_selection_monthly_positive: bool = False,
+    enable_r4: bool = False,
+    r4_min_passing_weeks: int = 1,
 ) -> dict[str, Any]:
     """Build final Abook/Bbook routing and an independent validation-period readout."""
-    if max_peak_leverage_ratio is not None and max_leverage_p95_ratio == 200.0:
+    if max_peak_leverage_ratio is not None and max_leverage_p95_ratio == 5000.0:
         max_leverage_p95_ratio = max_peak_leverage_ratio
     materialized = list(rows)
     # This is a hard safety boundary. The query already applies the same
@@ -1196,6 +1213,8 @@ def build_two_stage_payload(
     ]
     personal_logins = {int(login) for login in (personal_candidate_logins or set())}
     personal_info = dict(personal_candidate_info or {"enabled": False, "status": "disabled"})
+    news_logins = {int(login) for login in (news_candidate_logins or set())}
+    news_info = dict(news_candidate_info or {"enabled": False, "status": "disabled"})
     overview_materialized = list(overview_rows) if overview_rows is not None else list(materialized)
     overview_materialized = [
         row for row in overview_materialized
@@ -1237,26 +1256,22 @@ def build_two_stage_payload(
                 "phase": phase,
                 **_account_period_metrics(month_rows, identity, phase=phase),
             })
+        selection_month_pnls = [
+            _decimal(item["client_net_pnl"])
+            for item in monthly_metrics
+            if item["phase"] == "selection"
+        ]
+        selection_months_positive = bool(selection_month_pnls) and all(
+            value > ZERO for value in selection_month_pnls
+        )
         qualifies_sample = (
             selection["trade_count"] >= min_trades
-            and selection["active_trade_days"] >= min_active_days
         )
-        selection_consistency_ok = (
-            selection["monthly_consistency_ratio"] >= min_selection_monthly_consistency
-        )
-        avg_profit_ok = min_avg_profit <= 0 or (
-            avg_profit_snapshot_status == "ready"
-            and selection.get("avg_profit") is not None
-            and selection["avg_profit"] > min_avg_profit
-        )
-        abook_rules_pass = qualifies_sample and avg_profit_ok and selection["client_net_pnl"] > 0 and (
+        normal_abook_rules_pass = qualifies_sample and (
             selection["profit_factor"] is None or selection["profit_factor"] > min_profit_factor
-        ) and selection["average_daily_profit"] > min_avg_daily_profit \
-            and selection["win_rate"] >= min_win_rate \
+        ) and selection["win_rate"] >= min_win_rate \
             and selection["payoff_ratio"] >= min_payoff_ratio \
-            and selection_consistency_ok \
             and selection["top_positive_day_concentration"] < max_top1_day_profit_contribution \
-            and selection["max_daily_profit_month_contribution"] <= max_daily_profit_month_contribution \
             and _leverage_filter_pass(
                 selection, max_leverage_p95_ratio, max_high_leverage_holding_seconds
             )
@@ -1278,31 +1293,68 @@ def build_two_stage_payload(
             high_confidence_trades=high_confidence_trades,
             high_confidence_days=high_confidence_days,
         )
-        abook_rules_pass = bool(abook_rules_pass and stability["tier"] == "core")
+        # Day-distribution and stability metrics remain diagnostic only. They no
+        # longer gate Abook routing under the revised policy.
+        r4_pass = bool(
+            enable_r4
+            and first.get("r4_pass", False)
+            and int(first.get("r4_passing_weeks", 0) or 0) >= r4_min_passing_weeks
+            and _leverage_filter_pass(selection, max_leverage_p95_ratio, max_high_leverage_holding_seconds)
+        )
+        abook_rules_pass = bool(normal_abook_rules_pass or r4_pass)
         is_personal_candidate = int(identity["login"]) in personal_logins
+        is_news_candidate = int(identity["login"]) in news_logins
         martingale_record = None
         if martingale_snapshot is not None and getattr(martingale_snapshot, "status", "") == "ready":
             martingale_record = martingale_snapshot.indexed_records().get(
                 (str(identity["platform"]), int(identity["login"]))
             )
         martingale_level = martingale_record.get("risk_level") if martingale_record else None
-        snapshot_unavailable = martingale_snapshot is not None and getattr(martingale_snapshot, "status", "") != "ready"
-        martingale_blocked = snapshot_unavailable or martingale_level in set(excluded_martingale_levels)
+        martingale_detection_status = (
+            martingale_record.get("martingale_detection_status", "none")
+            if martingale_record else "none"
+        )
+        martingale_status = getattr(martingale_snapshot, "status", "") if martingale_snapshot is not None else ""
+        missing_platforms = set(getattr(martingale_snapshot, "missing_platforms", ())) if martingale_snapshot is not None else set()
+        snapshot_unavailable = martingale_status in {"missing", "invalid", "stale"} or (
+            martingale_status == "partial" and str(identity["platform"]) in missing_platforms
+        )
+        martingale_hard_block = (
+            martingale_detection_status == "confirmed"
+            and martingale_level in set(excluded_martingale_levels)
+        )
+        martingale_blocked = snapshot_unavailable or martingale_hard_block
         book = _final_book(
             martingale_detected=martingale_blocked,
-            personal_candidate=is_personal_candidate,
+            personal_candidate=is_personal_candidate or is_news_candidate,
             abook_rules_pass=abook_rules_pass,
         )
         if snapshot_unavailable:
             selection_source = "martingale_snapshot_unavailable"
         elif martingale_blocked:
             selection_source = "martingale_blocked"
+        elif r4_pass and is_personal_candidate and is_news_candidate:
+            selection_source = "r4_and_personal_and_news_list"
+        elif r4_pass and is_personal_candidate:
+            selection_source = "r4_and_personal_list"
+        elif r4_pass and is_news_candidate:
+            selection_source = "r4_and_news_list"
+        elif r4_pass:
+            selection_source = "r4"
+        elif is_personal_candidate and is_news_candidate:
+            selection_source = (
+                "rule_and_personal_and_news_list"
+                if abook_rules_pass
+                else "personal_and_news_candidate_list"
+            )
         elif is_personal_candidate:
             selection_source = (
                 "rule_and_personal_list"
                 if abook_rules_pass
                 else "personal_candidate_list"
             )
+        elif is_news_candidate:
+            selection_source = "rule_and_news_list" if abook_rules_pass else "news_candidate_list"
         elif abook_rules_pass:
             selection_source = "rule_filter"
         else:
@@ -1310,6 +1362,7 @@ def build_two_stage_payload(
         routing_reason = (
             "martingale_snapshot_unavailable" if snapshot_unavailable
             else "martingale" if martingale_blocked
+            else "r4" if r4_pass
             else "personal_list" if is_personal_candidate
             else "abook_rules" if abook_rules_pass
             else "abook_rules_failed"
@@ -1329,12 +1382,22 @@ def build_two_stage_payload(
             "book": book,
             "deployable": True,
             "is_personal_candidate": is_personal_candidate,
+            "is_news_candidate": is_news_candidate,
             "selection_source": selection_source,
             "routing_reason": routing_reason,
             "abook_rules_pass": abook_rules_pass,
+            "r4_pass": r4_pass,
+            "r4_passing_weeks": int(first.get("r4_passing_weeks", 0) or 0),
+            "r4_record": dict(first.get("r4_record") or {}),
+            "july_new_user": selection["trade_count"] == 0 and validation["trade_count"] > 0,
             "martingale_blocked": martingale_blocked,
+            "martingale_hard_block": martingale_hard_block,
             "martingale_status": getattr(martingale_snapshot, "status", "not_loaded") if martingale_snapshot is not None else "not_loaded",
             "martingale_risk_level": martingale_level,
+            "martingale_detection_status": martingale_detection_status,
+            "confirmed_windows": int(martingale_record.get("confirmed_windows", 0) or 0) if martingale_record else 0,
+            "confirmed_extreme_windows": int(martingale_record.get("confirmed_extreme_windows", 0) or 0) if martingale_record else 0,
+            "expanded_windows": int(martingale_record.get("expanded_windows", 0) or 0) if martingale_record else 0,
             "martingale_layer_hits": dict(martingale_record.get("layer_hits", {})) if martingale_record else {},
             "martingale_record": dict(martingale_record) if martingale_record else None,
             "validation_status": validation_status,
@@ -1362,6 +1425,7 @@ def build_two_stage_payload(
             "confidence_tier": stability["confidence_tier"],
             "selection_flags": stability["flags"],
             "selection_direction": stability["direction"],
+            "selection_months_positive": selection_months_positive,
             "selection_client_net_pnl": selection["client_net_pnl"],
             "validation_client_net_pnl": validation["client_net_pnl"],
             "risk_balance_prev_month": selection["risk_balance_prev_month"],
@@ -1412,11 +1476,22 @@ def build_two_stage_payload(
         "personal_abook": sum(1 for account in by_book["abook"] if account["is_personal_candidate"]),
         "personal_bbook_martingale": sum(1 for account in by_book["bbook"] if account["is_personal_candidate"] and account["martingale_blocked"]),
     }
+    if news_info.get("enabled"):
+        selection_counts.update({
+            "news_abook": sum(1 for account in by_book["abook"] if account["is_news_candidate"]),
+            "news_bbook_martingale": sum(1 for account in by_book["bbook"] if account["is_news_candidate"] and account["martingale_blocked"]),
+        })
     personal_matched = [account for account in accounts if account["is_personal_candidate"]]
     personal_info.update({
         "matched_accounts": len(personal_matched),
-        "added_accounts": sum(1 for account in personal_matched if account["selection_source"] == "personal_candidate_list"),
-        "overlap_accounts": sum(1 for account in personal_matched if account["selection_source"] == "rule_and_personal_list"),
+        "added_accounts": sum(1 for account in personal_matched if account["book"] == "abook" and not account["abook_rules_pass"] and not account["is_news_candidate"]),
+        "overlap_accounts": sum(1 for account in personal_matched if account["book"] == "abook" and (account["abook_rules_pass"] or account["is_news_candidate"])),
+    })
+    news_matched = [account for account in accounts if account["is_news_candidate"]]
+    news_info.update({
+        "matched_accounts": len(news_matched),
+        "added_accounts": sum(1 for account in news_matched if account["book"] == "abook" and not account["abook_rules_pass"] and not account["is_personal_candidate"]),
+        "overlap_accounts": sum(1 for account in news_matched if account["book"] == "abook" and (account["abook_rules_pass"] or account["is_personal_candidate"])),
     })
     stability_overview = {
         "abook": len(by_book["abook"]),
@@ -1672,25 +1747,39 @@ def build_two_stage_payload(
         },
         "rules": {
             "min_trades": min_trades,
-            "min_active_days": min_active_days,
+            "enable_r4": enable_r4,
+            "r4_min_passing_weeks": r4_min_passing_weeks,
+            "r4_thresholds": {
+                "primary_trade_pct": R4_PRIMARY_TRADE_PCT,
+                "win_rate": R4_WIN_RATE,
+                "total_trades": R4_MIN_TRADES,
+                "primary_trades": R4_MIN_PRIMARY_TRADES,
+                "soft_alignment": 1,
+            },
+            "selection_months_positive_required": False,
             "min_win_rate": min_win_rate,
             "min_profit_factor": min_profit_factor,
             "min_payoff_ratio": min_payoff_ratio,
-            "min_avg_daily_profit": min_avg_daily_profit,
-            "min_selection_monthly_consistency": min_selection_monthly_consistency,
-            "min_positive_month_rate": min_positive_month_rate,
             "max_top1_day_profit_contribution": max_top1_day_profit_contribution,
-            "max_daily_profit_month_contribution": max_daily_profit_month_contribution,
-            "min_avg_profit": min_avg_profit,
             "avg_profit_snapshot_status": avg_profit_snapshot_status,
             "max_leverage_p95_ratio": max_leverage_p95_ratio,
             "max_high_leverage_holding_seconds": max_high_leverage_holding_seconds,
             "risk_snapshot_status": risk_snapshot_status,
-            "min_direction_day_rate_lower_bound": min_direction_day_rate_lower_bound,
             "min_stability_score": min_stability_score,
-            "high_confidence_trades": high_confidence_trades,
-            "high_confidence_days": high_confidence_days,
+            "stability_score_mode": "diagnostic_only",
             "excluded_martingale_levels": list(excluded_martingale_levels),
+            "removed_selection_rules": [
+                "min_active_days",
+                "min_avg_daily_profit",
+                "min_positive_month_rate",
+                "min_selection_monthly_consistency",
+                "min_direction_day_rate_lower_bound",
+                "max_daily_profit_month_contribution",
+                "min_stability_score",
+                "min_avg_profit",
+                "selection_monthly_positive",
+                "selection_period_client_net_pnl",
+            ],
             "test_accounts_excluded": True,
             "excluded_account_group_tokens": ["test", "demo"],
         },
@@ -1706,6 +1795,7 @@ def build_two_stage_payload(
         "transitions": {book: dict(statuses) for book, statuses in transitions.items()},
         "profit_impact": profit_impact,
         "personal_candidate_list": personal_info,
+        "news_candidate_list": news_info,
         "profit_overview": profit_overview,
         "book_performance": book_performance,
         "daily_book_series": daily_book_series,

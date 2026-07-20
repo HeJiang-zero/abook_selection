@@ -107,6 +107,24 @@ def test_book_analytics_reports_style_top_accounts_and_risk_without_turnover():
     assert result["routing_quality"]["company_profit_comparison"]
 
 
+def test_book_analytics_exposes_leverage_histogram_buckets():
+    accounts = []
+    leverage_values = [0.5, 7.0, 30.0, 150.0, 2.0, 15.0, 75.0, 250.0]
+    abook_keys = set()
+    for index, leverage in enumerate(leverage_values, start=10):
+        account = _account(index, "abook" if index < 14 else "bbook", 20, 20)
+        account["risk_leverage_p95_ratio"] = leverage
+        accounts.append(account)
+        if index < 14:
+            abook_keys.add(("mt5", index))
+
+    result = build_book_analytics(_context(), accounts, abook_keys, symbol_rows=[])
+    histogram = result["risk_exposure"]["abook"]["leverage_histogram"]
+
+    assert histogram["labels"] == ["0–1x", "1–2x", "2–5x", "5–10x", "10–20x", "20–50x", "50–100x", "100–200x", ">200x"]
+    assert histogram["counts"] == [1, 0, 0, 1, 0, 1, 0, 1, 0]
+
+
 def test_book_analytics_separates_customer_pnl_from_company_profit_sign():
     accounts = [_account(1, "abook", 20, 20), _account(2, "bbook", -20, -20)]
     result = build_book_analytics(_context(), accounts, {('mt5', 1)}, symbol_rows=[])

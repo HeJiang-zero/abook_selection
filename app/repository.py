@@ -109,7 +109,7 @@ class ClickHouseRepository:
             WHERE is_deleted = 0
               AND positionCaseInsensitive(`group`, 'test') = 0
               AND positionCaseInsensitive(`group`, 'demo') = 0
-              AND platform IN ('mt5', 'hh_mt5')
+              AND platform IN ('mt4', 'mt5', 'hh_mt5')
             GROUP BY platform, `group`
             ORDER BY platform, `group`
             """

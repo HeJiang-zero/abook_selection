@@ -25,6 +25,7 @@ class AvgProfitSnapshot:
     status: str
     source_table: str | None = None
     calculation: str | None = None
+    missing_platforms: tuple[str, ...] = ()
 
     def indexed_records(self) -> dict[tuple[str, int], dict[str, Any]]:
         return {(str(row["platform"]), int(row["login"])): row for row in self.records}
@@ -64,6 +65,7 @@ class AvgProfitSnapshot:
             "selection_start": self.selection_start,
             "selection_end": self.selection_end,
             "platforms": list(self.platforms),
+            "missing_platforms": list(self.missing_platforms),
             "records": len(self.records),
             "source_table": self.source_table,
             "calculation": self.calculation,
@@ -81,14 +83,10 @@ def load_avg_profit_snapshot(path: Path, selection_start: str, selection_end: st
         return AvgProfitSnapshot(path, None, None, tuple(), tuple(), "invalid")
     snapshot_platforms = tuple(sorted(str(value) for value in payload.get("platforms", [])))
     requested = tuple(sorted(str(value) for value in platforms))
-    status = "ready"
-    if (
-        payload.get("selection_start") != selection_start
-        or payload.get("selection_end") != selection_end
-        or not set(requested).issubset(snapshot_platforms)
-    ):
-        status = "stale"
-    records = tuple(payload.get("records", [])) if status == "ready" else tuple()
+    dates_match = payload.get("selection_start") == selection_start and payload.get("selection_end") == selection_end
+    missing_platforms = tuple(sorted(set(requested) - set(snapshot_platforms)))
+    status = "stale" if not dates_match else "partial" if missing_platforms else "ready"
+    records = tuple(payload.get("records", [])) if status in {"ready", "partial"} else tuple()
     return AvgProfitSnapshot(
         path=path,
         selection_start=payload.get("selection_start"),
@@ -98,6 +96,7 @@ def load_avg_profit_snapshot(path: Path, selection_start: str, selection_end: st
         status=status,
         source_table=payload.get("source_table"),
         calculation=payload.get("calculation"),
+        missing_platforms=missing_platforms,
     )
 
 

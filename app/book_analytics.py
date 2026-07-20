@@ -20,6 +20,17 @@ PNL_BUCKETS = (
     ("profit_100_1000", "盈利 100–1000", 100.0, 1000.0),
     ("profit_over_1000", "盈利 > 1000", 1000.0, None),
 )
+LEVERAGE_BUCKETS = (
+    ("0–1x", None, 1.0),
+    ("1–2x", 1.0, 2.0),
+    ("2–5x", 2.0, 5.0),
+    ("5–10x", 5.0, 10.0),
+    ("10–20x", 10.0, 20.0),
+    ("20–50x", 20.0, 50.0),
+    ("50–100x", 50.0, 100.0),
+    ("100–200x", 100.0, 200.0),
+    (">200x", 200.0, None),
+)
 
 
 def _key(account: dict[str, Any]) -> AccountKey:
@@ -80,6 +91,19 @@ def _percentile(values: Iterable[float], quantile: float) -> float:
 def _metric_value(metric: dict[str, Any], name: str, default: float = 0.0) -> float:
     value = metric.get(name, default)
     return float(value) if value is not None else default
+
+
+def _leverage_histogram(values: Iterable[float]) -> dict[str, list[Any]]:
+    numeric_values = [float(value) for value in values if value is not None]
+    counts = []
+    for _, lower, upper in LEVERAGE_BUCKETS:
+        if lower is None:
+            counts.append(sum(value <= upper for value in numeric_values))
+        elif upper is None:
+            counts.append(sum(value > lower for value in numeric_values))
+        else:
+            counts.append(sum(lower < value <= upper for value in numeric_values))
+    return {"labels": [label for label, _, _ in LEVERAGE_BUCKETS], "counts": counts}
 
 
 def _phase_metrics(metrics: list[dict[str, Any]], phase: str, book: str) -> dict[str, Any]:
@@ -278,7 +302,7 @@ def _style_breakdown(accounts: list[dict[str, Any]], selection_months: list[str]
 
 
 def _risk_summary(accounts: list[dict[str, Any]], pnl_structure: dict[str, Any]) -> dict[str, Any]:
-    leverage = [account.get("risk_leverage_p95_ratio") for account in accounts if account.get("risk_leverage_p95_ratio") is not None]
+    leverage = [float(account["risk_leverage_p95_ratio"]) for account in accounts if account.get("risk_leverage_p95_ratio") is not None]
     threshold = _percentile(leverage, 0.95)
     extreme = [value for value in leverage if float(value) >= threshold] if threshold else []
     validation_values = [float(account.get("validation", {}).get("client_net_pnl", 0) or 0) for account in accounts]
@@ -287,6 +311,7 @@ def _risk_summary(accounts: list[dict[str, Any]], pnl_structure: dict[str, Any])
     return {
         "leverage_distribution": leverage, "leverage_p50": _percentile(leverage, 0.50), "leverage_p75": _percentile(leverage, 0.75),
         "leverage_p95": threshold, "leverage_max": round(max(leverage), 6) if leverage else 0.0,
+        "leverage_histogram": _leverage_histogram(leverage),
         "extreme_leverage_threshold": threshold, "extreme_leverage_accounts": len(extreme), "extreme_leverage_rate": round(len(extreme) / len(leverage), 6) if leverage else 0.0,
         "selection_max_drawdown": pnl_structure["max_drawdown_by_phase"]["selection"], "validation_max_drawdown": pnl_structure["max_drawdown_by_phase"]["validation"],
         "selection_worst_daily_customer_pnl": pnl_structure["worst_daily_customer_pnl"]["selection"], "validation_worst_daily_customer_pnl": pnl_structure["worst_daily_customer_pnl"]["validation"],

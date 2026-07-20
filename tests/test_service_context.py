@@ -58,6 +58,10 @@ def _snapshot(tmp_path):
             "platform": "mt5",
             "login": 7,
             "risk_level": "high",
+            "martingale_detection_status": "confirmed",
+            "confirmed_windows": 2,
+            "confirmed_extreme_windows": 0,
+            "expanded_windows": 0,
             "layer_hits": {"layer1": True, "layer2": True, "layer3": True, "layer4": True, "layer5": False},
         }],
     }))
@@ -124,11 +128,15 @@ def test_bbook_leakage_contains_selection_pnl_for_month_over_month_comparison():
             "book": "bbook",
             "selection": {"client_net_pnl": 120.0},
             "validation": {"client_net_pnl": 80.0},
-            "monthly": [{"month": "2026-06", "client_net_pnl": 45.0}],
+            "monthly": [
+                {"month": "2026-05", "client_net_pnl": 20.0},
+                {"month": "2026-06", "client_net_pnl": 45.0},
+            ],
             "selection_source": "abook_rules_failed",
         }
     ])
 
     row = summary["bbook_profitable"][0]
+    assert row["may_client_net_pnl"] == 20.0
     assert row["june_client_net_pnl"] == 45.0
     assert row["validation_client_net_pnl"] == 80.0

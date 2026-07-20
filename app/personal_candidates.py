@@ -12,6 +12,12 @@ DEFAULT_PERSONAL_CANDIDATE_PATH = Path(
         "/Users/jianghe/gzkj_副本_notickdata/markout_yearly/may_june_mean_bps_gt_0.05_logins.csv",
     )
 )
+DEFAULT_NEWS_CANDIDATE_PATH = Path(
+    os.getenv(
+        "ABOOK_NEWS_CANDIDATE_LIST_PATH",
+        str(Path(__file__).resolve().parent.parent / "news_candicate.csv"),
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -39,8 +45,8 @@ class PersonalCandidateList:
         }
 
 
-def load_personal_candidates(path: Path | None = None) -> PersonalCandidateList:
-    candidate_path = Path(path or DEFAULT_PERSONAL_CANDIDATE_PATH)
+def _load_candidates(path: Path) -> PersonalCandidateList:
+    candidate_path = Path(path)
     if not candidate_path.exists():
         return PersonalCandidateList(candidate_path, "missing", frozenset())
     try:
@@ -78,3 +84,11 @@ def load_personal_candidates(path: Path | None = None) -> PersonalCandidateList:
         duplicate_rows=duplicate_rows,
         invalid_rows=invalid_rows,
     )
+
+
+def load_personal_candidates(path: Path | None = None) -> PersonalCandidateList:
+    return _load_candidates(Path(path or DEFAULT_PERSONAL_CANDIDATE_PATH))
+
+
+def load_news_candidates(path: Path | None = None) -> PersonalCandidateList:
+    return _load_candidates(Path(path or DEFAULT_NEWS_CANDIDATE_PATH))

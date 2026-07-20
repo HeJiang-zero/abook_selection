@@ -32,8 +32,34 @@ def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
     assert "参数寻优" not in app
     assert "个人候选名单" in sidebar
     assert "马丁" in sidebar
-    for rule in ["min_trades", "min_stability_score", "max_leverage_p95_ratio", "max_daily_profit_month_contribution", "min_avg_profit", "excluded_martingale_levels"]:
-        assert rule in app or rule in sidebar
+    for rule in [
+        "min_trades", "min_payoff_ratio", "max_top1_day_profit_contribution",
+        "max_leverage_p95_ratio", "excluded_martingale_levels", "enable_r4",
+        "r4_min_passing_weeks",
+    ]:
+        assert rule in sidebar
+    assert "min_active_days" not in sidebar
+    assert "min_avg_daily_profit" not in sidebar
+    assert "max_daily_profit_month_contribution" not in sidebar
+    assert "min_avg_profit" not in sidebar
+    assert "7月新用户" in (FRONTEND / "src/components/AccountsTable.vue").read_text()
+    assert "confirmed_users" in sidebar
+    assert "confirmed_level_counts" in sidebar
+    assert "勾选 = 阻断该等级" in sidebar
+    assert "当前平台快照不完整" in sidebar
+    assert "suspected_users" in sidebar
+    assert "疑似马丁" in sidebar
+
+
+def test_frontend_default_rules_match_backend_july_tuned_profile():
+    app = _source("App.vue")
+    assert "min_trades: 75" in app
+    assert "min_win_rate: 0.5" in app
+    assert "min_profit_factor: 1.25" in app
+    assert "min_payoff_ratio: 0.4" in app
+    assert "max_top1_day_profit_contribution: 0.3" in app
+    assert "max_leverage_p95_ratio: 5000" in app
+    assert "enable_r4: false" in app
 
 
 def test_frontend_uses_new_analysis_actions_and_book_lazy_load():
@@ -59,6 +85,8 @@ def test_frontend_exposes_book_metrics_and_account_paging():
         assert metric in books
     assert "daily_turnover" not in books
     assert "Turnover" not in books
+    assert "leverage_histogram" in books
+    assert 'type: \'bar\'' in books
     for control in ["sortBy", "pageSize", "page"]:
         assert control in accounts
 
@@ -83,6 +111,9 @@ def test_frontend_has_martingale_drawer_and_responsive_sidebar_contract():
     css = (FRONTEND / "src" / "style.css").read_text()
     assert "layer1" in drawer and "layer5" in drawer
     assert "martingale_risk_level" in drawer
+    assert "confirmed_windows" in drawer
+    assert "martingale_detection_status" in drawer
+    assert "martingale_detection_status" in (FRONTEND / "src/components/AccountsTable.vue").read_text()
     assert "max-height: calc(100vh - 36px)" in css
     assert "overflow-y: auto" in css
 
@@ -99,7 +130,7 @@ def test_frontend_exposes_refresh_all_data_button_and_request_contract():
     assert "bookData.value = null" in app
 
 
-def test_frontend_exposes_abook_analysis_and_trade_detail_contract():
+def test_frontend_exposes_abook_analysis_and_account_detail_contract():
     component_path = ROOT / "frontend/src/components/AbookAnalysis.vue"
     assert component_path.exists()
     component = component_path.read_text()
@@ -110,7 +141,9 @@ def test_frontend_exposes_abook_analysis_and_trade_detail_contract():
         assert text in component
     assert "MisjudgeAnalysis" not in app
     assert "fetchAccountDetail" in api
-    assert "trades" in (ROOT / "frontend/src/components/AccountDrawer.vue").read_text()
+    drawer = (ROOT / "frontend/src/components/AccountDrawer.vue").read_text()
+    assert "metrics" in drawer and "de_extreme" in drawer and "markout" in drawer
+    assert "历史交易明细" not in drawer
 
 
 def test_frontend_exposes_pnl_audit_and_funnel_criteria_contract():
@@ -119,10 +152,41 @@ def test_frontend_exposes_pnl_audit_and_funnel_criteria_contract():
     analysis = (ROOT / "frontend/src/components/AbookAnalysis.vue").read_text()
 
     assert "2026-07-16" in app
-    for rule in ["min_trades", "min_active_days", "min_win_rate", "max_leverage_p95_ratio", "excluded_martingale_levels"]:
+    for rule in [
+        "min_trades", "min_win_rate", "min_profit_factor",
+        "min_payoff_ratio", "max_top1_day_profit_contribution",
+        "max_leverage_p95_ratio", "excluded_martingale_levels",
+    ]:
         assert rule in funnel
+    assert "min_active_days" not in funnel
+    assert "selection_months_positive" not in funnel
+    assert "R4 独立通道" in funnel
+    assert "r4_thresholds" in funnel
     assert "筛选标准" in funnel
     assert "selection_client_net_pnl" in analysis
     assert "june_client_net_pnl" in analysis
     assert "5月 P&amp;L" in analysis and "6月 P&amp;L" in analysis and "7月 P&amp;L" in analysis
+    assert "may_client_net_pnl" in analysis
+    assert "Bbook 公司影响" not in analysis
     assert "profit_overview?.pnl_basis" in analysis
+
+
+def test_frontend_account_lists_sort_and_drawer_hides_history_orders():
+    analysis = (FRONTEND / "src/components/AbookAnalysis.vue").read_text()
+    drawer = (FRONTEND / "src/components/AccountDrawer.vue").read_text()
+
+    assert "<details" in analysis
+    assert "sortBy" in analysis
+    assert "sortDirection" in analysis
+    for label in ["最大盈利日贡献率", "前三盈利日贡献率", "最大盈利订单贡献率", "最佳品种贡献率", "原始净利润", "去掉最大盈利日", "Entry 5s Markout"]:
+        assert label in drawer
+    assert "历史交易明细" not in drawer
+
+
+def test_frontend_keeps_account_drawer_open_during_analysis_refresh():
+    app = (FRONTEND / "src/App.vue").read_text()
+    drawer = (FRONTEND / "src/components/AccountDrawer.vue").read_text()
+    assert "preserveAccount" in app
+    assert "selectedAccount.value = null" not in app.split("async function loadAnalysis", 1)[1].split("async function openAccount", 1)[0]
+    assert '@click.self="emit(\'close\')"' not in drawer
+    assert '@click.stop' in drawer

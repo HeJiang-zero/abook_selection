@@ -10,19 +10,18 @@ import AccountsTable from './components/AccountsTable.vue'
 import AccountDrawer from './components/AccountDrawer.vue'
 import BookPerformance from './components/BookPerformance.vue'
 
-const defaultRules: Record<string, number | string[]> = {
-  min_trades: 20, min_active_days: 10, min_win_rate: 0.5, min_profit_factor: 1,
-  min_payoff_ratio: 0.8, min_avg_daily_profit: 0, min_selection_monthly_consistency: 0,
-  min_avg_profit: 0,
-  min_positive_month_rate: 0.5, max_top1_day_profit_contribution: 0.2,
-  max_daily_profit_month_contribution: 0.6, max_leverage_p95_ratio: 200, max_high_leverage_holding_seconds: 300,
-  min_direction_day_rate_lower_bound: 0.55, min_stability_score: 70,
+const defaultRules: Record<string, number | string[] | boolean> = {
+  min_trades: 75, min_win_rate: 0.5, min_profit_factor: 1.25,
+  min_payoff_ratio: 0.4,
+  max_top1_day_profit_contribution: 0.3,
+  max_leverage_p95_ratio: 5000, max_high_leverage_holding_seconds: 300,
   high_confidence_trades: 100, high_confidence_days: 30,
+  enable_r4: false, r4_min_passing_weeks: 1,
   excluded_martingale_levels: ['extreme', 'high', 'medium', 'low'],
 }
 const request = ref<RequestModel>({
   selection: { start: '2026-05-01', end: '2026-06-30' }, validation: { start: '2026-07-01', end: '2026-07-16' },
-  platforms: ['mt5', 'hh_mt5'], filters: { groups: [], logins: [] }, rules: { ...defaultRules }, personal_candidate_list: false,
+  platforms: ['mt5', 'hh_mt5'], filters: { groups: [], logins: [] }, rules: { ...defaultRules }, personal_candidate_list: false, news_candidate_list: false,
 })
 const data = ref<AnalysisPayload>({ accounts: [] })
 const activeTab = ref<Tab>('overview')
@@ -37,25 +36,40 @@ const selectedAccount = ref<AccountRow | null>(null)
 const accountDetail = ref<AccountDetailPayload | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
+let detailRequestId = 0
 
-async function loadAnalysis() {
-  loading.value = true; error.value = ''; bookData.value = null; selectedAccount.value = null; accountDetail.value = null; detailError.value = ''
-  try { data.value = await fetchAnalysis(request.value); rulesDirty.value = false } catch (err) { error.value = err instanceof Error ? err.message : String(err) } finally { loading.value = false }
+async function loadAnalysis(options: { preserveAccount?: boolean } = { preserveAccount: true }) {
+  const accountBeforeRefresh = selectedAccount.value
+  loading.value = true; error.value = ''; bookData.value = null
+  if (!options.preserveAccount) {
+    closeAccount()
+  }
+  try {
+    data.value = await fetchAnalysis(request.value)
+    if (options.preserveAccount && accountBeforeRefresh) {
+      const refreshed = (data.value.accounts || []).find(account => account.platform === accountBeforeRefresh.platform && account.login === accountBeforeRefresh.login)
+      if (refreshed) selectedAccount.value = refreshed
+    }
+    rulesDirty.value = false
+  } catch (err) { error.value = err instanceof Error ? err.message : String(err) } finally { loading.value = false }
 }
 async function openAccount(account: AccountRow) {
+  const requestId = ++detailRequestId
   selectedAccount.value = account
   accountDetail.value = null
   detailError.value = ''
   detailLoading.value = true
   try {
-    accountDetail.value = await fetchAccountDetail(account, request.value)
+    const detail = await fetchAccountDetail(account, request.value)
+    if (requestId === detailRequestId) accountDetail.value = detail
   } catch (err) {
-    detailError.value = err instanceof Error ? err.message : String(err)
+    if (requestId === detailRequestId) detailError.value = err instanceof Error ? err.message : String(err)
   } finally {
-    detailLoading.value = false
+    if (requestId === detailRequestId) detailLoading.value = false
   }
 }
 function closeAccount() {
+  detailRequestId += 1
   selectedAccount.value = null
   accountDetail.value = null
   detailError.value = ''
@@ -90,7 +104,7 @@ async function downloadExport() {
   URL.revokeObjectURL(link.href)
 }
 function selectTab(tab: Tab) { activeTab.value = tab; if (tab !== 'overview') loadBook() }
-function reset() { request.value.rules = { ...defaultRules }; request.value.personal_candidate_list = false; loadAnalysis() }
+function reset() { request.value.rules = { ...defaultRules }; request.value.personal_candidate_list = false; request.value.news_candidate_list = false; loadAnalysis() }
 watch(() => request.value.rules, () => { rulesDirty.value = true }, { deep: true })
 onMounted(loadAnalysis)
 const tabs: Array<{ id: Tab; label: string }> = [
@@ -105,7 +119,7 @@ const tabs: Array<{ id: Tab; label: string }> = [
     <div class="layout">
       <FilterSidebar :request="request" :data="data" :loading="loading" :rules-dirty="rulesDirty" :refreshing="refreshing" :refresh-message="refreshMessage" @apply="loadAnalysis" @reset="reset" @refresh="refreshAllSnapshots" />
       <main class="content"><div v-if="error" class="alert error">{{ error }}</div><nav class="tabs"><button v-for="tab in tabs" :key="tab.id" :class="{ active: activeTab === tab.id }" @click="selectTab(tab.id)">{{ tab.label }}</button></nav>
-        <template v-if="activeTab === 'overview'"><AbookAnalysis :data="data" @open="openAccount" /><KpiCards :data="data" /><SelectionFunnel :data="data" /><AccountsTable :accounts="data.accounts || []" @open="openAccount" /></template>
+        <template v-if="activeTab === 'overview'"><AbookAnalysis :data="data" @open="openAccount" /><KpiCards :data="data" /><SelectionFunnel :data="data" :rules-dirty="rulesDirty" /><AccountsTable :accounts="data.accounts || []" @open="openAccount" /></template>
         <template v-else><BookPerformance :analytics="bookData" :loading="bookLoading" :active-tab="activeTab" /></template>
       </main>
     </div>

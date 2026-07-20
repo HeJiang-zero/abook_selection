@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_SNAPSHOT_PATH = BASE_DIR / "data" / "user_risk_snapshot.json"
+RISK_CALCULATION_VERSION = "turnover_plus_concurrent_exposure_v4"
 MAX_SQL_EXCLUDED_LOGIN_FILTER_SIZE = 20000
 
 
@@ -27,13 +28,14 @@ class RiskSnapshot:
     platforms: tuple[str, ...]
     records: tuple[dict[str, Any], ...]
     status: str
+    missing_platforms: tuple[str, ...] = ()
 
     def allowed_logins(
         self,
         max_leverage_p95_ratio: float | None,
         max_high_leverage_holding_seconds: float | None = None,
     ) -> set[tuple[str, int]]:
-        if self.status != "ready":
+        if self.status not in {"ready", "partial"}:
             return set()
         allowed: set[tuple[str, int]] = set()
         for record in self.records:
@@ -57,7 +59,7 @@ class RiskSnapshot:
         max_leverage_p95_ratio: float | None,
         max_high_leverage_holding_seconds: float | None = None,
     ) -> set[tuple[str, int]]:
-        if self.status != "ready" or max_leverage_p95_ratio is None:
+        if self.status not in {"ready", "partial"} or max_leverage_p95_ratio is None:
             return set()
         return {
             (str(record["platform"]), int(record["login"]))
@@ -88,15 +90,21 @@ class RiskSnapshot:
                     "risk_average_open_degree": None,
                     "risk_peak_leverage_ratio": None,
                     "risk_leverage_p95_ratio": None,
+                    "risk_turnover_leverage_p95_ratio": None,
+                    "risk_concurrent_leverage_p95_ratio": None,
+                    "risk_exposure_status": "snapshot_record_missing" if self.status == "ready" else f"snapshot_{self.status}",
                     "risk_median_holding_seconds": None,
                     "risk_balance_status": "snapshot_record_missing" if self.status == "ready" else f"snapshot_{self.status}",
                 })
             else:
                 item.update({
-                    "risk_balance_prev_month": record.get("balance_prev_month"),
+                    "risk_balance_prev_month": record.get("balance_latest", record.get("balance_prev_month")),
                     "risk_average_open_degree": record.get("average_open_degree"),
                     "risk_peak_leverage_ratio": record.get("peak_leverage_ratio"),
                     "risk_leverage_p95_ratio": record.get("leverage_p95_ratio", record.get("peak_leverage_ratio")),
+                    "risk_turnover_leverage_p95_ratio": record.get("turnover_leverage_p95_ratio"),
+                    "risk_concurrent_leverage_p95_ratio": record.get("concurrent_leverage_p95_ratio"),
+                    "risk_exposure_status": record.get("exposure_status"),
                     "risk_median_holding_seconds": record.get("median_holding_seconds"),
                     "risk_balance_status": record.get("balance_status"),
                 })
@@ -106,10 +114,12 @@ class RiskSnapshot:
     def summary(self) -> dict[str, Any]:
         return {
             "status": self.status,
+            "calculation_version": RISK_CALCULATION_VERSION,
             "path": str(self.path),
             "selection_start": self.selection_start,
             "selection_end": self.selection_end,
             "platforms": list(self.platforms),
+            "missing_platforms": list(self.missing_platforms),
             "records": len(self.records),
         }
 
@@ -175,14 +185,11 @@ def load_risk_snapshot(
         return RiskSnapshot(path, None, None, tuple(), tuple(), "invalid")
     snapshot_platforms = tuple(sorted(str(value) for value in payload.get("platforms", [])))
     requested_platforms = tuple(sorted(str(value) for value in platforms))
-    status = "ready"
-    if (
-        payload.get("selection_start") != selection_start
-        or payload.get("selection_end") != selection_end
-        or not set(requested_platforms).issubset(snapshot_platforms)
-    ):
-        status = "stale"
-    records = tuple(payload.get("records", [])) if status == "ready" else tuple()
+    dates_match = payload.get("selection_start") == selection_start and payload.get("selection_end") == selection_end
+    missing_platforms = tuple(sorted(set(requested_platforms) - set(snapshot_platforms)))
+    version_match = payload.get("calculation_version") == RISK_CALCULATION_VERSION
+    status = "stale" if not dates_match or not version_match else "partial" if missing_platforms else "ready"
+    records = tuple(payload.get("records", [])) if status in {"ready", "partial"} else tuple()
     return RiskSnapshot(
         path=path,
         selection_start=payload.get("selection_start"),
@@ -190,6 +197,7 @@ def load_risk_snapshot(
         platforms=snapshot_platforms,
         records=records,
         status=status,
+        missing_platforms=missing_platforms,
     )
 
 
@@ -203,7 +211,7 @@ def build_local_risk_filter(request: "AnalysisRequest") -> LocalRiskFilter:
     allowed = None
     excluded = None
     sql_filter_applied = False
-    if snapshot.status == "ready":
+    if snapshot.status in {"ready", "partial"}:
         candidate_allowed = snapshot.allowed_logins(
             request.rules.max_leverage_p95_ratio,
             request.rules.max_high_leverage_holding_seconds,

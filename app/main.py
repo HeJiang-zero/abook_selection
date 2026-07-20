@@ -13,16 +13,18 @@ from .avg_profit import build_avg_profit_filter
 from .book_analytics import build_book_analytics
 from .exports import render_abook_csv
 from .models import AnalysisRequest, BookAnalyticsRequest, FilterOptions, SnapshotRefreshRequest
-from .personal_candidates import load_personal_candidates
+from .personal_candidates import load_news_candidates, load_personal_candidates
 from .repository import ClickHouseRepository, RepositoryConfigurationError
 from .snapshot_refresh import refresh_snapshots
 from .risk import build_local_risk_filter
+from .r4 import build_r4_filter
 from .service import (
     build_account_detail_payload,
     build_analysis_payload,
     build_two_stage_payload,
     prepare_analysis_context,
 )
+from .account_detail import load_markout_rows
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -90,21 +92,25 @@ def filter_options(repository: ClickHouseRepository = Depends(get_repository)) -
 def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depends(get_repository)) -> dict:
     try:
         personal_candidates = load_personal_candidates()
+        news_candidates = load_news_candidates()
         avg_profit_snapshot = build_avg_profit_filter(request)
         personal_candidates_enabled = request.personal_candidate_list and personal_candidates.status == "ready"
+        news_candidates_enabled = request.news_candidate_list and news_candidates.status == "ready"
         personal_candidate_logins = personal_candidates.login_ids if personal_candidates_enabled else frozenset()
+        news_candidate_logins = news_candidates.login_ids if news_candidates_enabled else frozenset()
         risk_filter = build_local_risk_filter(request)
+        r4_snapshot = build_r4_filter(request)
         martingale_snapshot = build_martingale_filter(request)
         effective_request = risk_filter.apply(request)
         overview_rows = None
         overview_daily_rows = None
-        if personal_candidates_enabled or risk_filter.allowed_logins is not None or risk_filter.excluded_logins:
+        if personal_candidates_enabled or news_candidates_enabled or risk_filter.allowed_logins is not None or risk_filter.excluded_logins:
             # Company-profit overview must remain population-level. Do not let
             # the Abook leverage rule remove users from the monthly baseline.
             overview_rows = repository.fetch_analysis(request)
             overview_daily_rows = _fetch_daily_rows(repository, request)
-        if personal_candidates_enabled:
-            # Personal candidates are an explicit Abook override. Keep the
+        if personal_candidates_enabled or news_candidates_enabled:
+            # Candidate lists are explicit Abook overrides. Keep the
             # normal platform/group/login/test-demo query boundaries, but do
             # not let the local leverage snapshot remove them.
             rows = overview_rows or []
@@ -114,9 +120,11 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             excluded_logins = risk_filter.excluded_logins
             rows = repository.fetch_analysis(effective_request, excluded_logins=excluded_logins) if excluded_logins else repository.fetch_analysis(effective_request)
         rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(rows))
+        rows = r4_snapshot.enrich_rows(rows)
         rows = avg_profit_snapshot.enrich_rows(rows)
         if overview_rows is not None:
             overview_rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(overview_rows))
+            overview_rows = r4_snapshot.enrich_rows(overview_rows)
             overview_rows = avg_profit_snapshot.enrich_rows(overview_rows)
         # Risk SQL exclusions are an optimization for the Abook candidate query.
         # Final routing and company P&L must still classify the full population:
@@ -173,14 +181,25 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             high_confidence_trades=rules.high_confidence_trades,
             high_confidence_days=rules.high_confidence_days,
             personal_candidate_logins=set(personal_candidate_logins),
+            news_candidate_logins=set(news_candidate_logins),
             personal_candidate_info=(
                 personal_candidates.summary(enabled=request.personal_candidate_list)
+            ),
+            news_candidate_info=(
+                news_candidates.summary(enabled=request.news_candidate_list)
             ),
             martingale_snapshot=martingale_snapshot,
             excluded_martingale_levels=request.rules.excluded_martingale_levels,
             avg_profit_snapshot_status=avg_profit_snapshot.status,
+            require_selection_monthly_positive=rules.require_selection_monthly_positive,
+            enable_r4=rules.enable_r4,
+            r4_min_passing_weeks=rules.r4_min_passing_weeks,
         )
         payload["risk_management"] = risk_filter.summary()
+        payload["r4"] = {
+            **r4_snapshot.summary(),
+            "routed_users": sum(1 for account in payload.get("accounts", []) if account.get("r4_pass")),
+        }
         payload["martingale"] = martingale_snapshot.summary(request.rules.excluded_martingale_levels)
         payload["avg_profit"] = avg_profit_snapshot.summary()
         return payload
@@ -202,7 +221,10 @@ def account_detail(
 ) -> dict:
     try:
         rows = repository.fetch_account_detail(platform, login, start, end)
-        payload = build_account_detail_payload(rows)
+        payload = build_account_detail_payload(
+            rows,
+            markout_rows=load_markout_rows(login, selection_start, end),
+        )
         snapshot = load_martingale_snapshot(snapshot_path(), selection_start, selection_end, [platform])
         payload["martingale"] = {
             **snapshot.summary(),

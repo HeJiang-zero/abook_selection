@@ -1,6 +1,6 @@
 import json
 
-from app.risk import load_risk_snapshot
+from app.risk import RISK_CALCULATION_VERSION, load_risk_snapshot
 from app.models import AnalysisRequest
 
 
@@ -10,6 +10,7 @@ def test_risk_snapshot_filters_positive_balance_but_keeps_nonpositive_balance(tm
         "selection_start": "2026-05-01",
         "selection_end": "2026-06-30",
         "platforms": ["mt5"],
+        "calculation_version": RISK_CALCULATION_VERSION,
         "records": [
             {"platform": "mt5", "login": 1, "balance_prev_month": 1000,
              "average_open_degree": 1, "peak_leverage_ratio": 3,
@@ -32,12 +33,34 @@ def test_risk_snapshot_filters_positive_balance_but_keeps_nonpositive_balance(tm
     assert enriched["risk_peak_leverage_ratio"] is None
 
 
+def test_risk_snapshot_prefers_latest_daily_balance_over_legacy_balance_field(tmp_path):
+    path = tmp_path / "risk.json"
+    path.write_text(json.dumps({
+        "selection_start": "2026-05-01",
+        "selection_end": "2026-06-30",
+        "platforms": ["mt5"],
+        "calculation_version": RISK_CALCULATION_VERSION,
+        "records": [{
+            "platform": "mt5", "login": 8,
+            "balance_prev_month": 100,
+            "balance_latest": 250,
+            "balance_status": "positive",
+            "leverage_p95_ratio": 2,
+        }],
+    }))
+
+    snapshot = load_risk_snapshot(path, "2026-05-01", "2026-06-30", ["mt5"])
+
+    assert snapshot.enrich_rows([{"platform": "mt5", "login": 8}])[0]["risk_balance_prev_month"] == 250
+
+
 def test_risk_snapshot_keeps_short_holding_high_leverage_accounts(tmp_path):
     path = tmp_path / "risk.json"
     path.write_text(json.dumps({
         "selection_start": "2026-05-01",
         "selection_end": "2026-06-30",
         "platforms": ["mt5"],
+        "calculation_version": RISK_CALCULATION_VERSION,
         "records": [
             {"platform": "mt5", "login": 4, "balance_prev_month": 1000,
              "peak_leverage_ratio": 250, "median_holding_seconds": 60,
@@ -60,6 +83,7 @@ def test_risk_filter_detects_explicit_login_removed_by_leverage(tmp_path):
         "selection_start": "2026-05-01",
         "selection_end": "2026-06-30",
         "platforms": ["mt5"],
+        "calculation_version": RISK_CALCULATION_VERSION,
         "records": [{"platform": "mt5", "login": 2, "balance_prev_month": 1000,
                      "peak_leverage_ratio": 8, "balance_status": "positive"}],
     }))
@@ -80,12 +104,41 @@ def test_risk_snapshot_reports_missing_and_stale(tmp_path):
     assert stale.status == "stale"
 
 
+def test_risk_snapshot_with_missing_requested_platform_is_partial(tmp_path):
+    path = tmp_path / "partial.json"
+    path.write_text(json.dumps({
+        "selection_start": "2026-05-01",
+        "selection_end": "2026-06-30",
+        "platforms": ["mt5"],
+        "calculation_version": RISK_CALCULATION_VERSION,
+        "records": [],
+    }))
+
+    partial = load_risk_snapshot(path, "2026-05-01", "2026-06-30", ["mt5", "mt4"])
+
+    assert partial.status == "partial"
+    assert partial.missing_platforms == ("mt4",)
+
+
+def test_legacy_balance_snapshot_is_stale_until_rebuilt(tmp_path):
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps({
+        "selection_start": "2026-05-01",
+        "selection_end": "2026-06-30",
+        "platforms": ["mt5"],
+        "records": [{"platform": "mt5", "login": 1, "balance_prev_month": 100}],
+    }))
+
+    assert load_risk_snapshot(path, "2026-05-01", "2026-06-30", ["mt5"]).status == "stale"
+
+
 def test_large_ready_snapshot_remains_a_local_login_filter(tmp_path, monkeypatch):
     path = tmp_path / "large.json"
     path.write_text(json.dumps({
         "selection_start": "2026-05-01",
         "selection_end": "2026-06-30",
         "platforms": ["mt5"],
+        "calculation_version": RISK_CALCULATION_VERSION,
         "records": [
             {"platform": "mt5", "login": login, "balance_prev_month": 1000,
              "peak_leverage_ratio": 8, "balance_status": "positive"}

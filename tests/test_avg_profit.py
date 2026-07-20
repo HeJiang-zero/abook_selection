@@ -72,7 +72,7 @@ def test_avg_profit_snapshot_enriches_rows_and_applies_strict_threshold(tmp_path
     assert not snapshot.allows(("mt5", 2), 100)
 
 
-def test_avg_profit_filter_keeps_failed_accounts_in_bbook():
+def test_avg_profit_threshold_does_not_gate_abook_routing():
     def row(login: int, avg_profit: float, month: str) -> dict:
         return {
             "platform": "mt5", "login": login, "account_group": "real", "phase": "selection",
@@ -101,5 +101,5 @@ def test_avg_profit_filter_keeps_failed_accounts_in_bbook():
 
     by_login = {account["login"]: account for account in payload["accounts"]}
     assert by_login[1]["book"] == "abook"
-    assert by_login[2]["book"] == "bbook"
-    assert payload["rules"]["min_avg_profit"] == 100
+    assert by_login[2]["book"] == "abook"
+    assert "min_avg_profit" in payload["rules"]["removed_selection_rules"]

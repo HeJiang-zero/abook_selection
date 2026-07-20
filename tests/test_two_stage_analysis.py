@@ -229,13 +229,13 @@ def test_two_stage_analysis_reports_transition_precision_lift_and_abook_delta():
         min_stability_score=0,
     )
 
-    assert result["transitions"]["abook"]["continued_profitable"] == 1
+    assert result["transitions"]["abook"]["continued_profitable"] == 2
     assert result["transitions"]["bbook"]["continued_loss"] == 1
     assert result["validation"]["groups"]["abook"]["precision"] == 1.0
-    assert result["validation"]["groups"]["bbook"]["precision"] == 0.5
-    assert result["profit_impact"]["abook"]["selection_client_net_pnl"] == 200.0
-    assert result["profit_impact"]["abook"]["incremental_change"] == 200.0
-    assert result["profit_impact"]["bbook"]["incremental_change"] == -190.0
+    assert result["validation"]["groups"]["bbook"]["precision"] == 1.0
+    assert result["profit_impact"]["abook"]["selection_client_net_pnl"] == 210.0
+    assert result["profit_impact"]["abook"]["incremental_change"] == 210.0
+    assert result["profit_impact"]["bbook"]["incremental_change"] == -200.0
     json.dumps(result, allow_nan=False)
 
 
@@ -338,6 +338,139 @@ def test_two_stage_analysis_requires_strict_top1_contribution_and_skips_leverage
     assert accounts[32]["book"] == "bbook"
     assert accounts[33]["book"] == "bbook"
     assert accounts[34]["book"] == "abook"
+
+
+def test_abook_selection_uses_trade_quality_but_not_active_days_or_removed_quality_gates():
+    rows = [
+        row(101, "05", trades=1, wins=1, losses=0, market=10, net=10,
+            gross_wins=10, gross_losses=0, active_days=1, daily_sum=10),
+        row(101, "06", trades=1, wins=1, losses=0, market=12, net=12,
+            gross_wins=12, gross_losses=0, active_days=1, daily_sum=12),
+    ]
+
+    result = build_two_stage_payload(
+        rows,
+        selection_start="2026-05-01",
+        selection_end="2026-06-30",
+        validation_start="2026-07-01",
+        validation_end="2026-07-02",
+        min_trades=2,
+        min_active_days=99,
+        min_win_rate=0,
+        min_profit_factor=1,
+        min_payoff_ratio=0,
+        min_avg_daily_profit=999,
+        min_positive_month_rate=1,
+        min_selection_monthly_consistency=1,
+        max_top1_day_profit_contribution=2,
+        max_daily_profit_month_contribution=0.01,
+        min_direction_day_rate_lower_bound=1,
+        min_stability_score=100,
+    )
+
+    account = result["accounts"][0]
+    assert account["book"] == "abook"
+    assert account["selection_months_positive"] is True
+
+
+def test_abook_selection_does_not_require_positive_selection_months():
+    rows = [
+        row(102, "05", trades=1, wins=1, losses=0, market=10, net=10,
+            gross_wins=10, gross_losses=0, active_days=1, daily_sum=10),
+        row(102, "06", trades=1, wins=1, losses=0, market=-5, net=-5,
+            gross_wins=10, gross_losses=0, active_days=1, daily_sum=-5),
+    ]
+
+    result = build_two_stage_payload(
+        rows,
+        selection_start="2026-05-01",
+        selection_end="2026-06-30",
+        validation_start="2026-07-01",
+        validation_end="2026-07-02",
+        min_trades=2,
+        min_active_days=0,
+        min_win_rate=0,
+        min_profit_factor=1,
+        min_payoff_ratio=0,
+        min_avg_daily_profit=-100,
+        min_positive_month_rate=0,
+        min_selection_monthly_consistency=0,
+        max_top1_day_profit_contribution=2,
+        max_daily_profit_month_contribution=1,
+        min_direction_day_rate_lower_bound=0,
+        min_stability_score=0,
+        require_selection_monthly_positive=True,
+    )
+
+    account = result["accounts"][0]
+    assert account["selection"]["client_net_pnl"] > 0
+    assert account["selection_months_positive"] is False
+    assert account["book"] == "abook"
+    assert result["rules"]["selection_months_positive_required"] is False
+    assert "selection_monthly_positive" in result["rules"]["removed_selection_rules"]
+    assert "selection_period_client_net_pnl" in result["rules"]["removed_selection_rules"]
+
+
+def test_r4_is_an_independent_selection_channel_for_may_june_data_only():
+    rows = [
+        row(103, "05", trades=5, wins=1, losses=4, market=-100, net=-100,
+            gross_wins=10, gross_losses=-110, active_days=1, daily_sum=-100),
+        row(103, "06", trades=5, wins=1, losses=4, market=-100, net=-100,
+            gross_wins=10, gross_losses=-110, active_days=1, daily_sum=-100),
+    ]
+    for item in rows:
+        item.update({
+            "r4_pass": True,
+            "r4_passing_weeks": 1,
+            "r4_win_rate": 0.589,
+            "r4_primary_trade_pct": 0.381,
+        })
+
+    result = build_two_stage_payload(
+        rows,
+        selection_start="2026-05-01",
+        selection_end="2026-06-30",
+        validation_start="2026-07-01",
+        validation_end="2026-07-02",
+        min_trades=20,
+        min_win_rate=0.9,
+        min_profit_factor=2,
+        min_payoff_ratio=2,
+        enable_r4=True,
+        r4_min_passing_weeks=1,
+    )
+
+    account = result["accounts"][0]
+    assert account["book"] == "abook"
+    assert account["selection_source"] == "r4"
+    assert account["r4_pass"] is True
+
+
+def test_july_new_user_is_tagged_but_not_routed_by_new_user_status():
+    rows = [
+        row(104, "05", trades=0, wins=0, losses=0, market=0, net=0),
+        row(104, "06", trades=0, wins=0, losses=0, market=0, net=0),
+        row(104, "07", trades=30, wins=25, losses=5, market=300, net=300,
+            gross_wins=350, gross_losses=-50, active_days=10, daily_sum=300),
+    ]
+
+    result = build_two_stage_payload(
+        rows,
+        selection_start="2026-05-01",
+        selection_end="2026-06-30",
+        validation_start="2026-07-01",
+        validation_end="2026-07-16",
+        min_trades=2,
+        min_win_rate=0,
+        min_profit_factor=0,
+        min_payoff_ratio=0,
+        max_top1_day_profit_contribution=2,
+    )
+
+    account = result["accounts"][0]
+    assert account["july_new_user"] is True
+    assert account["book"] == "bbook"
+    assert account["selection_source"] != "r4"
 
 
 def test_two_stage_analysis_allows_short_holding_high_leverage_exception_only():
@@ -450,6 +583,10 @@ def test_two_stage_analysis_exposes_monthly_company_profit_and_july_book_split()
         rows,
         selection_start="2026-05-01", selection_end="2026-06-30",
         validation_start="2026-07-01", validation_end="2026-07-13",
+        min_trades=2,
+        min_win_rate=0.5,
+        min_profit_factor=1,
+        min_payoff_ratio=0.8,
         min_positive_month_rate=0,
         max_top1_day_profit_contribution=1,
         min_direction_day_rate_lower_bound=0,
@@ -551,7 +688,7 @@ def test_two_stage_analysis_scores_stability_and_penalizes_one_day_concentration
     assert "profit_concentration" in concentrated["selection_flags"]
     assert stable["stability"]["score"] > concentrated["stability"]["score"]
     assert stable["confidence_tier"] in {"medium", "high"}
-    assert result["selection"]["stability_overview"]["bbook"] == 2
+    assert result["selection"]["stability_overview"]["bbook"] == 1
     assert result["coverage"]["source_min"] == "2026-05-15"
     assert "2026-05" in result["coverage"]["partial_months"]
 
@@ -725,3 +862,36 @@ def test_personal_candidate_list_forces_union_without_duplicate_account_impact()
     assert result["personal_candidate_list"]["overlap_accounts"] == 1
     assert result["profit_impact"]["abook"]["validation_incremental_change"] == 50.0
     assert len([account for account in result["accounts"] if account["login"] == 601]) == 1
+
+
+def test_news_candidate_list_joins_existing_abook_rules_without_duplicate_account():
+    rows = [
+        row(701, "05", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100),
+        row(701, "06", trades=20, wins=15, losses=5, market=120, net=100,
+            gross_wins=180, gross_losses=-60, active_days=10, daily_sum=100),
+        row(702, "05", trades=2, wins=1, losses=1, market=20, net=10,
+            gross_wins=30, gross_losses=-20, active_days=1, daily_sum=10),
+        row(702, "06", trades=2, wins=1, losses=1, market=20, net=10,
+            gross_wins=30, gross_losses=-20, active_days=1, daily_sum=10),
+    ]
+
+    result = build_two_stage_payload(
+        rows,
+        news_candidate_logins={701, 702},
+        news_candidate_info={"enabled": True, "status": "ready", "unique_logins": 2},
+        selection_start="2026-05-01", selection_end="2026-06-30",
+        validation_start="2026-07-01", validation_end="2026-07-13",
+        min_trades=20, min_active_days=10, min_profit_factor=1,
+        min_avg_daily_profit=0, min_positive_month_rate=0,
+        max_top1_day_profit_contribution=1,
+        min_direction_day_rate_lower_bound=0, min_stability_score=0,
+    )
+
+    assert result["selection"]["counts"]["abook"] == 2
+    assert result["selection"]["counts"]["news_abook"] == 2
+    assert result["news_candidate_list"]["added_accounts"] == 1
+    assert result["news_candidate_list"]["overlap_accounts"] == 1
+    assert result["news_candidate_list"]["matched_accounts"] == 2
+    assert len([account for account in result["accounts"] if account["login"] == 701]) == 1
+    assert len([account for account in result["accounts"] if account["login"] == 702]) == 1

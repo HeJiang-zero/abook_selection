@@ -88,7 +88,11 @@ def test_analysis_returns_two_stage_payload_for_new_request():
     try:
         response = client.post(
             "/api/abook/analysis",
-            json={"rules": {"min_stability_score": 72, "max_top1_day_profit_contribution": 0.4}},
+            json={"rules": {
+                "min_trades": 2,
+                "min_stability_score": 72,
+                "max_top1_day_profit_contribution": 0.4,
+            }},
         )
     finally:
         app.dependency_overrides.clear()

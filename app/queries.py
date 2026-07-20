@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from typing import Any
 
 
-ALLOWED_PLATFORMS = {"mt5", "hh_mt5"}
+ALLOWED_PLATFORMS = {"mt4", "mt5", "hh_mt5"}
 
 
 def _date_end_exclusive(end: str) -> str:

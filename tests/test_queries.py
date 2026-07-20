@@ -53,6 +53,18 @@ def test_analysis_query_does_not_compute_turnover():
     assert "turnover" not in query.lower()
 
 
+def test_martingale_snapshot_query_requires_repeated_confirmed_evidence():
+    from pathlib import Path
+
+    source = Path("scripts/build_martingale_snapshot.py").read_text()
+
+    assert "confirmed_gate" in source
+    assert "confirmed_extreme_candidate" in source
+    assert "confirmed_extreme_windows" in source
+    assert "expanded_windows" in source
+    assert "averaging_down_profit <= 0" in source
+
+
 def test_analysis_query_embeds_large_local_login_list_to_avoid_http_url_414():
     logins = list(range(3000))
     query, params = build_analysis_query(
@@ -131,6 +143,19 @@ def test_analysis_query_uses_tuple_population_and_canonical_deals_pnl():
     assert "coalesce(d.deal_market_pnl, 0) AS market_pnl" in query
     assert "positionCaseInsensitive(`group`, 'test') = 0" in query
     assert "positionCaseInsensitive(`group`, 'demo') = 0" in query
+
+
+def test_account_detail_query_keeps_open_close_fields_for_exposure_reconstruction():
+    from app.queries import build_account_detail_query
+
+    query, _ = build_account_detail_query("mt5", 7, "2026-05-01", "2026-06-30")
+
+    assert "entry_time" in query
+    assert "exit_time" in query
+    assert "entry_price" in query
+    assert "volume" in query
+    assert "entry_deal_id" in query
+    assert "exit_deal_id" in query
 
 
 def test_daily_pnl_query_aggregates_utc_deals_and_reuses_account_boundaries():

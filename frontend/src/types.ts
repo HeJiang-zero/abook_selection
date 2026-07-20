@@ -5,8 +5,9 @@ export interface RequestModel {
   validation: { start: string; end: string }
   platforms: string[]
   filters: { groups: string[]; logins: number[] }
-  rules: Record<string, number | string[]>
+  rules: Record<string, number | string[] | boolean>
   personal_candidate_list: boolean
+  news_candidate_list: boolean
 }
 
 export interface AccountRow {
@@ -28,10 +29,22 @@ export interface AccountRow {
   risk_average_open_degree?: number | null
   risk_peak_leverage_ratio?: number | null
   risk_leverage_p95_ratio?: number | null
+  risk_turnover_leverage_p95_ratio?: number | null
+  risk_concurrent_leverage_p95_ratio?: number | null
+  risk_exposure_status?: string | null
   martingale_status?: string
   martingale_risk_level?: string | null
+  martingale_detection_status?: 'none' | 'suspected' | 'confirmed'
   martingale_blocked?: boolean
+  martingale_hard_block?: boolean
+  confirmed_windows?: number
+  confirmed_extreme_windows?: number
+  expanded_windows?: number
   martingale_layer_hits?: Record<string, boolean>
+  r4_pass?: boolean
+  r4_passing_weeks?: number
+  r4_record?: Record<string, any>
+  july_new_user?: boolean
 }
 
 export interface BookAnalyticsPayload {
@@ -59,7 +72,6 @@ export interface SnapshotRefreshResponse {
 }
 
 export interface AccountDetailPayload {
-  trades: Array<Record<string, any>>
   symbols: Array<{
     symbol: string
     trade_count: number
@@ -67,6 +79,14 @@ export interface AccountDetailPayload {
     profit: number
     win_rate: number
     avg_holding_seconds: number
+  }>
+  metrics?: Record<string, number>
+  concentration?: Record<string, number>
+  de_extreme?: Record<string, number>
+  markout?: Record<string, {
+    positive_5s_bps?: number | null
+    negative_5s_bps?: number | null
+    curve: Array<Record<string, number | null>>
   }>
   martingale?: Record<string, any>
 }

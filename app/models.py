@@ -35,29 +35,30 @@ class SnapshotRefreshRequest(BaseModel):
     @field_validator("platforms")
     @classmethod
     def validate_platforms(cls, value: List[str]) -> List[str]:
-        allowed = {"mt5", "hh_mt5"}
+        allowed = {"mt4", "mt5", "hh_mt5"}
         if not value or set(value) - allowed:
-            raise ValueError("platforms must contain only mt5 or hh_mt5")
+            raise ValueError("platforms must contain only mt4, mt5, or hh_mt5")
         return sorted(set(value))
 
 
 class AnalysisRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    min_trades: int = Field(default=20, ge=0)
-    min_active_days: int = Field(default=10, ge=0)
+    min_trades: int = Field(default=75, ge=0)
+    # Retained for request compatibility; active trade days no longer gate Abook routing.
+    min_active_days: int = Field(default=0, ge=0)
     min_win_rate: float = Field(default=0.5, ge=0, le=1)
-    min_profit_factor: float = Field(default=1.0, ge=0)
-    min_payoff_ratio: float = Field(default=0.8, ge=0)
+    min_profit_factor: float = Field(default=1.25, ge=0)
+    min_payoff_ratio: float = Field(default=0.4, ge=0)
     min_avg_daily_profit: float = Field(default=0.0, ge=0)
     min_avg_profit: float = Field(default=0.0, ge=0)
     min_selection_monthly_consistency: float = Field(default=0.0, ge=0, le=1)
     min_positive_month_rate: float = Field(default=0.5, ge=0, le=1)
-    max_top1_day_profit_contribution: float = Field(default=0.2, gt=0, le=1)
+    max_top1_day_profit_contribution: float = Field(default=0.3, gt=0, le=1)
     max_daily_profit_month_contribution: float = Field(default=0.6, gt=0, le=1)
-    max_leverage_p95_ratio: float = Field(default=200.0, gt=0)
+    max_leverage_p95_ratio: float = Field(default=5000.0, gt=0)
     # Kept for old clients; service decisions use max_leverage_p95_ratio.
-    max_peak_leverage_ratio: float = Field(default=200.0, gt=0)
+    max_peak_leverage_ratio: float = Field(default=5000.0, gt=0)
     max_high_leverage_holding_seconds: float = Field(default=300.0, ge=0)
     min_direction_day_rate_lower_bound: float = Field(default=0.55, ge=0, le=1)
     min_stability_score: float = Field(default=70.0, ge=0, le=100)
@@ -66,13 +67,19 @@ class AnalysisRules(BaseModel):
     excluded_martingale_levels: List[Literal["extreme", "high", "medium", "low"]] = Field(
         default_factory=lambda: ["extreme", "high", "medium", "low"]
     )
+    # Retained for old clients; monthly P&L is diagnostic/validation only and
+    # can no longer gate Abook routing.
+    require_selection_monthly_positive: bool = False
+    # Disabled by default: July 2026 validation sweep found R4 reduced Abook net P&L.
+    enable_r4: bool = False
+    r4_min_passing_weeks: int = Field(default=1, ge=1, le=2)
 
     @model_validator(mode="after")
     def sync_legacy_leverage_rule(self) -> "AnalysisRules":
         # Older clients only send max_peak_leverage_ratio. Treat that value as
         # the p95 threshold during the migration, without using peak leverage
         # in the calculation itself.
-        if self.max_peak_leverage_ratio != 200.0 and self.max_leverage_p95_ratio == 200.0:
+        if self.max_peak_leverage_ratio != 5000.0 and self.max_leverage_p95_ratio == 5000.0:
             self.max_leverage_p95_ratio = self.max_peak_leverage_ratio
         return self
 
@@ -90,6 +97,7 @@ class AnalysisRequest(BaseModel):
     filters: AnalysisFilters = Field(default_factory=AnalysisFilters)
     rules: AnalysisRules = Field(default_factory=AnalysisRules)
     personal_candidate_list: bool = False
+    news_candidate_list: bool = False
 
     # Backward-compatible fields for old callers. New callers should use the
     # explicit selection/validation/rules structure.
@@ -102,7 +110,7 @@ class AnalysisRequest(BaseModel):
     @field_validator("platforms")
     @classmethod
     def validate_platforms(cls, value: List[str]) -> List[str]:
-        allowed = {"mt5", "hh_mt5"}
+        allowed = {"mt4", "mt5", "hh_mt5"}
         invalid = set(value) - allowed
         if invalid:
             raise ValueError(f"unsupported platform: {sorted(invalid)}")

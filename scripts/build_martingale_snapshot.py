@@ -18,6 +18,30 @@ from app.queries import ALLOWED_PLATFORMS
 RISK_LEVEL_ORDER = ("extreme", "high", "medium", "low")
 
 
+def _risk_level_for_row(row: dict, detection_status: str) -> str:
+    """Return severity without letting a broad outlier upgrade confirmed users."""
+    if detection_status == "confirmed":
+        strict_fields = (
+            ("confirmed_extreme_tier_windows", "extreme"),
+            ("confirmed_high_tier_windows", "high"),
+            ("confirmed_medium_tier_windows", "medium"),
+            ("confirmed_low_tier_windows", "low"),
+        )
+        for field, level in strict_fields:
+            if int(row[field]):
+                return level
+        return "low" if int(row.get("confirmed_windows", 0)) else "low"
+    for field, level in (
+        ("extreme_windows", "extreme"),
+        ("high_windows", "high"),
+        ("medium_windows", "medium"),
+        ("low_windows", "low"),
+    ):
+        if int(row[field]):
+            return level
+    return "low"
+
+
 def _end_exclusive(value: str) -> str:
     return (date.fromisoformat(value) + timedelta(days=1)).isoformat()
 
@@ -42,8 +66,8 @@ def build_snapshot(
     )
     # avg_volume_escalation is stored as a multiplier (median 1.0 across the
     # table), so martingale.md thresholds apply unchanged. Windows are rolling
-    # 7-day windows; a user is scored on every window overlapping the
-    # selection period and the worst window decides the risk level.
+    # 7-day windows. A broad candidate is retained for audit, but only repeated
+    # confirmed windows can produce a confirmed user-level detection.
     query = """
     WITH users AS (
         SELECT platform, login
@@ -83,6 +107,11 @@ def build_snapshot(
         SELECT
             *,
             (layer1 AND layer3 AND layer4) AS confirmed_gate,
+            (layer1 AND layer3 AND layer4
+             AND escalation >= 1.5
+             AND max_sequence_length >= 7
+             AND sequence_total_profit < 0
+             AND averaging_down_profit <= 0) AS confirmed_extreme_candidate,
             (layer1 AND (layer2 OR layer3 OR layer4 OR layer5_strict OR layer5_alt)) AS gate,
             multiIf(
                 gate AND escalation >= 1.5 AND max_sequence_length >= 7 AND sequence_total_profit < 0, 'extreme',
@@ -94,7 +123,19 @@ def build_snapshot(
                 gate AND escalation >= 1.2, 'medium',
                 gate AND escalation >= 1.1, 'low',
                 'none'
-            ) AS tier
+            ) AS tier,
+            multiIf(
+                confirmed_extreme_candidate, 'extreme',
+                confirmed_gate AND (
+                    (escalation >= 1.3 AND max_sequence_length >= 5 AND averaging_down_ratio >= 0.60
+                     AND averaging_down_profit <= 0)
+                    OR (escalation >= 1.2 AND layer5_strict)
+                    OR layer5_alt
+                ), 'high',
+                confirmed_gate AND escalation >= 1.2, 'medium',
+                confirmed_gate, 'low',
+                'none'
+            ) AS confirmed_tier
         FROM windows
     )
     SELECT
@@ -108,6 +149,13 @@ def build_snapshot(
         countIf(layer1 AND layer2 AND layer3 AND layer4 AND layer5_strict) AS strict_windows,
         countIf(layer1 AND layer2 AND layer3 AND layer4 AND layer5_alt) AS alt_windows,
         countIf(confirmed_gate) AS confirmed_gate_windows,
+        uniqExactIf(window_end, confirmed_gate) AS confirmed_windows,
+        uniqExactIf(window_end, confirmed_extreme_candidate) AS confirmed_extreme_windows,
+        uniqExactIf(window_end, gate AND NOT confirmed_gate) AS expanded_windows,
+        uniqExactIf(window_end, confirmed_tier = 'extreme') AS confirmed_extreme_tier_windows,
+        uniqExactIf(window_end, confirmed_tier = 'high') AS confirmed_high_tier_windows,
+        uniqExactIf(window_end, confirmed_tier = 'medium') AS confirmed_medium_tier_windows,
+        uniqExactIf(window_end, confirmed_tier = 'low') AS confirmed_low_tier_windows,
         countIf(gate) AS gate_windows,
         countIf(tier = 'extreme') AS extreme_windows,
         countIf(tier = 'high') AS high_windows,
@@ -125,6 +173,7 @@ def build_snapshot(
     FROM scored
     GROUP BY platform, login
     HAVING extreme_windows + high_windows + medium_windows + low_windows > 0
+        OR confirmed_windows > 0
     ORDER BY platform, login
     """
     result = client.query(query, parameters={
@@ -136,23 +185,31 @@ def build_snapshot(
     records = []
     for values in result.result_rows:
         row = dict(zip(result.column_names, values))
-        if int(row["extreme_windows"]):
-            risk_level = "extreme"
-        elif int(row["high_windows"]):
-            risk_level = "high"
-        elif int(row["medium_windows"]):
-            risk_level = "medium"
+        confirmed_windows = int(row["confirmed_windows"])
+        candidate_windows = sum(
+            int(row[field])
+            for field in ("extreme_windows", "high_windows", "medium_windows", "low_windows")
+        )
+        if confirmed_windows >= 2:
+            detection_status = "confirmed"
+        elif confirmed_windows or candidate_windows:
+            detection_status = "suspected"
         else:
-            risk_level = "low"
-        detection_mode = "confirmed" if int(row["confirmed_gate_windows"]) > 0 else "expanded"
+            detection_status = "none"
+        risk_level = _risk_level_for_row(row, detection_status)
+        detection_mode = "confirmed" if confirmed_windows > 0 else "expanded"
         records.append({
             "platform": str(row["platform"]),
             "login": int(row["login"]),
             "risk_level": risk_level,
             "detection_mode": detection_mode,
+            "martingale_detection_status": detection_status,
             "windows_total": int(row["windows_total"]),
             "gate_windows": int(row["gate_windows"]),
             "confirmed_gate_windows": int(row["confirmed_gate_windows"]),
+            "confirmed_windows": confirmed_windows,
+            "confirmed_extreme_windows": int(row["confirmed_extreme_windows"]),
+            "expanded_windows": int(row["expanded_windows"]),
             "extreme_windows": int(row["extreme_windows"]),
             "high_windows": int(row["high_windows"]),
             "medium_windows": int(row["medium_windows"]),
