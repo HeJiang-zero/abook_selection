@@ -118,6 +118,10 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
         if overview_rows is not None:
             overview_rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(overview_rows))
             overview_rows = avg_profit_snapshot.enrich_rows(overview_rows)
+        # Risk SQL exclusions are an optimization for the Abook candidate query.
+        # Final routing and company P&L must still classify the full population:
+        # excluded high-leverage users belong in Bbook, not outside the report.
+        routing_rows = overview_rows if overview_rows is not None else rows
         if request.lookback_months is not None:
             payload = build_analysis_payload(
                 rows,
@@ -129,8 +133,8 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             payload["martingale"] = martingale_snapshot.summary(request.rules.excluded_martingale_levels)
             payload["avg_profit"] = avg_profit_snapshot.summary()
             return payload
-        if personal_candidates_enabled:
-            daily_rows = overview_daily_rows or []
+        if overview_daily_rows is not None:
+            daily_rows = overview_daily_rows
         elif risk_filter.is_empty_for(request):
             daily_rows = []
         else:
@@ -142,7 +146,7 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             )
         rules = request.rules
         payload = build_two_stage_payload(
-            rows,
+            routing_rows,
             overview_rows=overview_rows,
             daily_rows=daily_rows,
             overview_daily_rows=overview_daily_rows,
@@ -191,7 +195,7 @@ def account_detail(
     platform: str,
     login: int,
     start: str = "2026-05-01",
-    end: str = "2026-07-13",
+    end: str = "2026-07-16",
     selection_start: str = "2026-05-01",
     selection_end: str = "2026-06-30",
     repository: ClickHouseRepository = Depends(get_repository),

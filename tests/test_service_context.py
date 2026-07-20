@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from app.martingale import load_martingale_snapshot
 from app.models import AnalysisRules
-from app.service import _daily_group_drawdown, build_two_stage_payload, classify_accounts, prepare_analysis_context
+from app.service import _daily_group_drawdown, build_misjudge_summary, build_two_stage_payload, classify_accounts, prepare_analysis_context
 
 
 def _row(month: str, pnl: int) -> dict:
@@ -113,3 +113,22 @@ def test_group_drawdown_uses_chronological_account_day_rows():
     ]
 
     assert _daily_group_drawdown(accounts, daily_rows, "2026-07-01", "2026-07-13") == 50
+
+
+def test_bbook_leakage_contains_selection_pnl_for_month_over_month_comparison():
+    summary = build_misjudge_summary([
+        {
+            "platform": "mt5",
+            "login": 7,
+            "account_group": "real",
+            "book": "bbook",
+            "selection": {"client_net_pnl": 120.0},
+            "validation": {"client_net_pnl": 80.0},
+            "monthly": [{"month": "2026-06", "client_net_pnl": 45.0}],
+            "selection_source": "abook_rules_failed",
+        }
+    ])
+
+    row = summary["bbook_profitable"][0]
+    assert row["june_client_net_pnl"] == 45.0
+    assert row["validation_client_net_pnl"] == 80.0

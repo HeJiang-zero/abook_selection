@@ -84,7 +84,7 @@ class AnalysisRequest(BaseModel):
         default_factory=lambda: AnalysisPeriod(start=date(2026, 5, 1), end=date(2026, 6, 30))
     )
     validation: AnalysisPeriod = Field(
-        default_factory=lambda: AnalysisPeriod(start=date(2026, 7, 1), end=date(2026, 7, 13))
+        default_factory=lambda: AnalysisPeriod(start=date(2026, 7, 1), end=date(2026, 7, 16))
     )
     platforms: List[str] = Field(default_factory=lambda: ["mt5", "hh_mt5"])
     filters: AnalysisFilters = Field(default_factory=AnalysisFilters)

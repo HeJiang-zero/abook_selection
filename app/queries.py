@@ -113,7 +113,6 @@ WITH users AS (
         sum(profit) AS market_pnl,
         sumIf(profit, profit > 0) AS gross_wins,
         sumIf(profit, profit < 0) AS gross_losses,
-        sum(turnover) AS turnover,
         avg(holding_seconds) AS avg_holding_seconds,
         quantileTDigest(0.5)(toFloat64(holding_seconds)) AS median_holding_seconds,
         countIf(direction = 'Long') AS long_trades,
@@ -230,6 +229,8 @@ WITH users AS (
     INNER JOIN users AS u
         ON mt.platform = u.platform AND mt.login = u.login
     WHERE mt.platform IN {{platforms:Array(String)}}
+      AND mt.exit_time >= {{start:Date}}
+      AND mt.exit_time < {{end_exclusive:Date}}
 ), deal_source_coverage AS (
     SELECT
         min(d.time) AS source_deal_raw_min,
@@ -241,7 +242,9 @@ WITH users AS (
     INNER JOIN users AS u
         ON d.platform = u.platform AND d.login = u.login
     WHERE d.platform IN {{platforms:Array(String)}}
-)
+      AND d.time >= {{start:Date}}
+      AND d.time < {{end_exclusive:Date}}
+    )
 SELECT
     k.platform AS platform,
     k.login AS login,
@@ -286,7 +289,6 @@ SELECT
     coalesce(a.daily_pnl_square_sum, 0) AS daily_pnl_square_sum,
     coalesce(a.daily_variance_count, 0) AS daily_variance_count,
     coalesce(a.daily_abs_sum, 0) AS daily_abs_sum,
-    coalesce(m.turnover, 0) AS turnover,
     coalesce(m.avg_holding_seconds, 0) AS avg_holding_seconds,
     coalesce(m.median_holding_seconds, 0) AS median_holding_seconds,
     coalesce(m.long_trades, 0) AS long_trades,
@@ -393,7 +395,7 @@ def build_account_detail_query(platform: str, login: int, start: str, end: str) 
     SELECT
         platform, login, symbol, direction, entry_time, exit_time,
         entry_price, exit_price, volume, profit, holding_seconds,
-        turnover, entry_deal_id, exit_deal_id
+        entry_deal_id, exit_deal_id
     FROM risk.dwd_matched_trades AS m FINAL
     INNER JOIN risk.ods_mt5_users AS u FINAL
       ON m.platform = u.platform AND m.login = u.login
@@ -438,7 +440,7 @@ def build_book_symbol_query(
     return f"""
     SELECT m.platform, m.login, m.symbol,
            count() AS trade_count, sum(m.volume) AS volume,
-           sum(m.profit) AS market_pnl, sum(m.turnover) AS turnover,
+           sum(m.profit) AS market_pnl,
            avg(m.holding_seconds) AS avg_holding_seconds
     FROM risk.dwd_matched_trades AS m FINAL
     INNER JOIN risk.ods_mt5_users AS u FINAL
@@ -452,29 +454,4 @@ def build_book_symbol_query(
       {_book_key_predicate(account_keys)}
     GROUP BY m.platform, m.login, m.symbol
     ORDER BY market_pnl DESC
-    """, {"platforms": clean_platforms, "start": start, "end_exclusive": _date_end_exclusive(end)}
-
-
-def build_daily_turnover_query(
-    *, platforms: list[str], start: str, end: str, account_keys: set[tuple[str, int]] | None = None
-) -> tuple[str, dict[str, Any]]:
-    clean_platforms = [platform for platform in platforms if platform in ALLOWED_PLATFORMS] or sorted(ALLOWED_PLATFORMS)
-    return f"""
-    SELECT m.platform, m.login, toDate(m.exit_time) AS trade_date,
-           sum(m.turnover) AS turnover,
-           sumIf(m.turnover, m.direction = 'Long') AS long_turnover,
-           sumIf(m.turnover, m.direction = 'Short') AS short_turnover,
-           sum(m.profit) AS market_pnl, count() AS trade_count
-    FROM risk.dwd_matched_trades AS m FINAL
-    INNER JOIN risk.ods_mt5_users AS u FINAL
-      ON m.platform = u.platform AND m.login = u.login
-    WHERE u.is_deleted = 0
-      AND positionCaseInsensitive(u.`group`, 'test') = 0
-      AND positionCaseInsensitive(u.`group`, 'demo') = 0
-      AND m.platform IN {{platforms:Array(String)}}
-      AND m.exit_time >= {{start:Date}}
-      AND m.exit_time < {{end_exclusive:Date}}
-      {_book_key_predicate(account_keys)}
-    GROUP BY m.platform, m.login, trade_date
-    ORDER BY trade_date, m.platform, m.login
     """, {"platforms": clean_platforms, "start": start, "end_exclusive": _date_end_exclusive(end)}

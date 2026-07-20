@@ -3,7 +3,8 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from app.main import app, get_repository
+from app.main import analysis, app, get_repository
+from app.models import AnalysisRequest
 
 
 client = TestClient(app)
@@ -141,3 +142,97 @@ def test_refresh_snapshots_endpoint_reports_refresh_failure(monkeypatch):
 
     assert response.status_code == 502
     assert "source unavailable" in response.json()["detail"]
+
+
+def test_account_detail_endpoint_forwards_requested_analysis_window():
+    calls = []
+
+    class FakeRepository:
+        def fetch_account_detail(self, platform, login, start, end):
+            calls.append((platform, login, start, end))
+            return []
+
+    app.dependency_overrides[get_repository] = lambda: FakeRepository()
+    try:
+        response = client.get(
+            "/api/abook/accounts/mt5/7",
+            params={
+                "start": "2026-05-01",
+                "end": "2026-07-16",
+                "selection_start": "2026-05-01",
+                "selection_end": "2026-06-30",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert calls == [("mt5", 7, "2026-05-01", "2026-07-16")]
+
+
+def test_analysis_routes_population_accounts_even_when_risk_sql_excludes_some(monkeypatch):
+    full_population = [{"platform": "mt5", "login": 1}, {"platform": "mt5", "login": 2}]
+    effective_population = [full_population[0]]
+    captured = {}
+
+    class Snapshot:
+        status = "ready"
+
+        def enrich_rows(self, rows):
+            return list(rows)
+
+        def summary(self, *args):
+            return {"status": self.status}
+
+    class RiskFilter:
+        snapshot = Snapshot()
+        status = "ready"
+        allowed_logins = None
+        excluded_logins = {('mt5', 2)}
+
+        def apply(self, request):
+            return request
+
+        def is_empty_for(self, request):
+            return False
+
+        def summary(self):
+            return {"status": self.status}
+
+    class SnapshotFilter:
+        status = "missing"
+
+        def enrich_rows(self, rows):
+            return list(rows)
+
+        def summary(self, *args):
+            return {"status": self.status}
+
+    class FakeRepository:
+        def fetch_analysis(self, request, excluded_logins=None):
+            return effective_population if excluded_logins else full_population
+
+        def fetch_daily_pnl(self, request, excluded_logins=None):
+            return []
+
+    class Candidates:
+        status = "disabled"
+        login_ids = frozenset()
+
+        def summary(self, enabled=False):
+            return {"enabled": enabled, "status": self.status}
+
+    monkeypatch.setattr("app.main.build_local_risk_filter", lambda request: RiskFilter())
+    monkeypatch.setattr("app.main.build_martingale_filter", lambda request: SnapshotFilter())
+    monkeypatch.setattr("app.main.build_avg_profit_filter", lambda request: SnapshotFilter())
+    monkeypatch.setattr("app.main.load_personal_candidates", lambda: Candidates())
+
+    def fake_build(rows, **kwargs):
+        captured["rows"] = rows
+        return {}
+
+    monkeypatch.setattr("app.main.build_two_stage_payload", fake_build)
+
+    analysis(AnalysisRequest(), FakeRepository())
+
+    assert {(row["platform"], row["login"]) for row in captured["rows"]} == {('mt5', 1), ('mt5', 2)}

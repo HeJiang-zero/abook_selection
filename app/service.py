@@ -246,7 +246,6 @@ def _aggregate_account(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "gross_losses": _float(gross_losses),
         "costs": _float(_sum(rows, "costs")),
         "funding_pnl": _float(_sum(rows, "funding_pnl")),
-        "turnover": _float(_sum(rows, "turnover")),
         "win_rate": _ratio(Decimal(winning_trades), Decimal(trade_count)),
         "profit_factor": _profit_factor(gross_wins, gross_losses),
         "active_trade_days": active_trade_days,
@@ -437,7 +436,6 @@ def _empty_period_row(account: dict[str, Any], month: str) -> dict[str, Any]:
         "daily_pnl_square_sum": ZERO,
         "daily_variance_count": 0,
         "daily_abs_sum": ZERO,
-        "turnover": ZERO,
         "avg_holding_seconds": ZERO,
         "median_holding_seconds": ZERO,
         "long_trades": 0,
@@ -478,6 +476,12 @@ def _account_period_metrics(
     if not rows:
         rows = [_empty_period_row(account, "1970-01")]
     metrics = _aggregate_account(rows)
+    avg_profit_values = [row.get("avg_profit") for row in rows if row.get("avg_profit") is not None]
+    metrics["avg_profit"] = float(avg_profit_values[0]) if avg_profit_values else None
+    metrics["avg_profit_status"] = next(
+        (str(row.get("avg_profit_status")) for row in rows if row.get("avg_profit_status")),
+        "not_loaded",
+    )
     if phase in {"selection", "validation"}:
         median_field = f"{phase}_median_holding_seconds"
         symbols_field = f"{phase}_symbols_traded"
@@ -734,6 +738,7 @@ def classify_accounts(
     rules: Any,
     personal_candidate_logins: set[int] | None = None,
     martingale_snapshot: Any | None = None,
+    avg_profit_snapshot_status: str = "not_loaded",
 ) -> list[dict[str, Any]]:
     """Classify a materialized context without issuing another data query."""
     payload = build_two_stage_payload(
@@ -751,6 +756,7 @@ def classify_accounts(
         min_profit_factor=rules.min_profit_factor,
         min_payoff_ratio=rules.min_payoff_ratio,
         min_avg_daily_profit=rules.min_avg_daily_profit,
+        min_avg_profit=rules.min_avg_profit,
         min_selection_monthly_consistency=rules.min_selection_monthly_consistency,
         min_positive_month_rate=rules.min_positive_month_rate,
         max_top1_day_profit_contribution=rules.max_top1_day_profit_contribution,
@@ -764,6 +770,7 @@ def classify_accounts(
         personal_candidate_logins=personal_candidate_logins,
         martingale_snapshot=martingale_snapshot,
         excluded_martingale_levels=rules.excluded_martingale_levels,
+        avg_profit_snapshot_status=avg_profit_snapshot_status,
     )
     return payload["accounts"]
 
@@ -827,7 +834,6 @@ def _group_summary(accounts: list[dict[str, Any]], target: Optional[str] = None)
         ),
         "profit_factor": _profit_factor(gross_wins, gross_losses),
         "total_volume": sum(account["validation"]["total_volume"] for account in accounts),
-        "turnover": sum(account["validation"]["turnover"] for account in accounts),
         # Account ordering is not a time series. The group drawdown is filled
         # from account-day rows by build_two_stage_payload below.
         "max_drawdown": 0.0,
@@ -878,10 +884,20 @@ def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     bbook_profitable = []
     for account in accounts:
         validation_pnl = float(account.get("validation", {}).get("client_net_pnl", account.get("validation_client_net_pnl", 0.0)))
+        june_pnl = next(
+            (
+                float(month.get("client_net_pnl", 0.0) or 0.0)
+                for month in account.get("monthly", [])
+                if str(month.get("month")) == "2026-06"
+            ),
+            0.0,
+        )
         item = {
             "platform": account["platform"],
             "login": int(account["login"]),
             "account_group": account.get("account_group", ""),
+            "selection_client_net_pnl": float(account.get("selection", {}).get("client_net_pnl", account.get("selection_client_net_pnl", 0.0))),
+            "june_client_net_pnl": june_pnl,
             "validation_client_net_pnl": validation_pnl,
             "selection_source": account.get("selection_source", ""),
             "selection_flags": list(account.get("selection_flags", [])),
@@ -1148,6 +1164,7 @@ def build_two_stage_payload(
     min_profit_factor: float = 1.0,
     min_payoff_ratio: float = 0.8,
     min_avg_daily_profit: float = 0.0,
+    min_avg_profit: float = 0.0,
     min_selection_monthly_consistency: float = 0.0,
     min_positive_month_rate: float = 0.5,
     max_top1_day_profit_contribution: float = 0.2,
@@ -1164,6 +1181,7 @@ def build_two_stage_payload(
     personal_candidate_info: dict[str, Any] | None = None,
     martingale_snapshot: Any | None = None,
     excluded_martingale_levels: Iterable[str] = ("extreme", "high", "medium", "low"),
+    avg_profit_snapshot_status: str = "not_loaded",
 ) -> dict[str, Any]:
     """Build final Abook/Bbook routing and an independent validation-period readout."""
     if max_peak_leverage_ratio is not None and max_leverage_p95_ratio == 200.0:
@@ -1205,6 +1223,20 @@ def build_two_stage_payload(
         validation_rows = validation_rows or [_empty_period_row(identity, month) for month in validation_months]
         selection = _account_period_metrics(selection_rows, identity, phase="selection")
         validation = _account_period_metrics(validation_rows, identity, phase="validation")
+        monthly_metrics = []
+        for month in all_months:
+            phase = "selection" if month in selection_months else "validation"
+            month_rows = [
+                row for row in account_rows
+                if _month(row["month_start"]) == month
+                and (row.get("phase") not in {"selection", "validation"} or row.get("phase") == phase)
+            ]
+            month_rows = month_rows or [_empty_period_row(identity, month)]
+            monthly_metrics.append({
+                "month": month,
+                "phase": phase,
+                **_account_period_metrics(month_rows, identity, phase=phase),
+            })
         qualifies_sample = (
             selection["trade_count"] >= min_trades
             and selection["active_trade_days"] >= min_active_days
@@ -1212,7 +1244,12 @@ def build_two_stage_payload(
         selection_consistency_ok = (
             selection["monthly_consistency_ratio"] >= min_selection_monthly_consistency
         )
-        abook_rules_pass = qualifies_sample and selection["client_net_pnl"] > 0 and (
+        avg_profit_ok = min_avg_profit <= 0 or (
+            avg_profit_snapshot_status == "ready"
+            and selection.get("avg_profit") is not None
+            and selection["avg_profit"] > min_avg_profit
+        )
+        abook_rules_pass = qualifies_sample and avg_profit_ok and selection["client_net_pnl"] > 0 and (
             selection["profit_factor"] is None or selection["profit_factor"] > min_profit_factor
         ) and selection["average_daily_profit"] > min_avg_daily_profit \
             and selection["win_rate"] >= min_win_rate \
@@ -1304,6 +1341,9 @@ def build_two_stage_payload(
             "transition_status": _transition(book, validation_status),
             "selection": selection,
             "validation": validation,
+            "monthly": monthly_metrics,
+            "avg_profit": selection.get("avg_profit"),
+            "avg_profit_status": selection.get("avg_profit_status", avg_profit_snapshot_status),
             "stability": {
                 "score": stability["score"],
                 "tier": stability["tier"],
@@ -1527,6 +1567,13 @@ def build_two_stage_payload(
             "bbook": _book_split_summary(by_book["bbook"], abook=False),
         },
         "company_profit_definition": "book company profit = - user net trading P&L; Abook assumed company profit = 0",
+        "pnl_basis": {
+            "client_net_pnl": "UTC ods_mt5_deals: sum(profit + storage + commission + fee) where is_deleted = 0 and action IN (0, 1)",
+            "market_pnl": "UTC ods_mt5_deals: sum(profit) where is_deleted = 0 and action IN (0, 1)",
+            "funding_pnl": "action IN (2, 3) is kept separately and is not included in client_net_pnl",
+            "company_pnl": "Bbook company P&L = - client_net_pnl; Abook company P&L is theoretical 0 without external hedge execution data",
+            "matched_trades": "dwd_matched_trades is used for matched trade counts and cross-check fields, not the canonical client_net_pnl",
+        },
     }
     book_performance = {
         "selection": {
@@ -1634,6 +1681,8 @@ def build_two_stage_payload(
             "min_positive_month_rate": min_positive_month_rate,
             "max_top1_day_profit_contribution": max_top1_day_profit_contribution,
             "max_daily_profit_month_contribution": max_daily_profit_month_contribution,
+            "min_avg_profit": min_avg_profit,
+            "avg_profit_snapshot_status": avg_profit_snapshot_status,
             "max_leverage_p95_ratio": max_leverage_p95_ratio,
             "max_high_leverage_holding_seconds": max_high_leverage_holding_seconds,
             "risk_snapshot_status": risk_snapshot_status,

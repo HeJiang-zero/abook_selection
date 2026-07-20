@@ -11,3 +11,5 @@ data/user_risk_snapshot.json
 data/user_risk_snapshot.json.tmp
 data/martingale_snapshot.json
 data/martingale_snapshot.json.tmp
+data/avg_profit_snapshot.json
+data/avg_profit_snapshot.json.tmp

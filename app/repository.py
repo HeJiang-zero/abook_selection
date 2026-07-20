@@ -11,7 +11,6 @@ from .queries import (
     build_analysis_query,
     build_book_symbol_query,
     build_daily_pnl_query,
-    build_daily_turnover_query,
 )
 
 
@@ -96,14 +95,6 @@ class ClickHouseRepository:
         start = min(request.selection.start, request.validation.start)
         end = max(request.selection.end, request.validation.end)
         query, params = build_book_symbol_query(
-            platforms=request.platforms, start=start.isoformat(), end=end.isoformat(), account_keys=account_keys
-        )
-        return self._rows(query, params)
-
-    def fetch_daily_turnover_rows(self, request: AnalysisRequest, account_keys: set[tuple[str, int]] | None = None) -> list[dict[str, Any]]:
-        start = min(request.selection.start, request.validation.start)
-        end = max(request.selection.end, request.validation.end)
-        query, params = build_daily_turnover_query(
             platforms=request.platforms, start=start.isoformat(), end=end.isoformat(), account_keys=account_keys
         )
         return self._rows(query, params)

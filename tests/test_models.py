@@ -22,7 +22,7 @@ def test_default_strategy_filters_are_profit_factor_and_average_daily_profit():
     assert request.rules.min_profit_factor == 1.0
     assert request.rules.min_avg_daily_profit == 0.0
     assert request.selection.start.isoformat() == "2026-05-01"
-    assert request.validation.end.isoformat() == "2026-07-13"
+    assert request.validation.end.isoformat() == "2026-07-16"
     assert request.rules.min_positive_month_rate == 0.5
     assert request.rules.max_top1_day_profit_contribution == 0.2
     assert request.rules.max_daily_profit_month_contribution == 0.6

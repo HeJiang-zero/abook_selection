@@ -18,10 +18,16 @@ export interface AccountRow {
   selection_client_net_pnl: number
   validation_client_net_pnl: number
   validation_status: string
-  selection: Record<string, number>
-  validation: Record<string, number>
+  selection: Record<string, number | null>
+  validation: Record<string, number | null>
+  monthly?: Array<Record<string, any>>
   stability: { score: number; tier: string }
   selection_flags: string[]
+  confidence_tier?: string
+  risk_balance_prev_month?: number | null
+  risk_average_open_degree?: number | null
+  risk_peak_leverage_ratio?: number | null
+  risk_leverage_p95_ratio?: number | null
   martingale_status?: string
   martingale_risk_level?: string | null
   martingale_blocked?: boolean
@@ -52,6 +58,19 @@ export interface SnapshotRefreshResponse {
   }>
 }
 
+export interface AccountDetailPayload {
+  trades: Array<Record<string, any>>
+  symbols: Array<{
+    symbol: string
+    trade_count: number
+    volume: number
+    profit: number
+    win_rate: number
+    avg_holding_seconds: number
+  }>
+  martingale?: Record<string, any>
+}
+
 export interface AnalysisPayload {
   selection?: { counts: Record<string, number>; groups: Record<string, unknown> }
   validation?: { groups: Record<string, any>; diagnostics: Record<string, any> }
@@ -59,6 +78,7 @@ export interface AnalysisPayload {
   profit_impact?: Record<string, any>
   book_performance?: Record<string, any>
   misjudge?: Record<string, any>
+  rules?: Record<string, any>
   funnel?: { stages: Array<{ name: string; count: number; drop_reasons: Record<string, number> }> }
   martingale?: Record<string, any>
   accounts?: AccountRow[]

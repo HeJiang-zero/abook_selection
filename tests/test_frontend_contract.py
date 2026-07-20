@@ -44,7 +44,8 @@ def test_frontend_uses_new_analysis_actions_and_book_lazy_load():
     assert "/api/abook/export" in api
     assert "/api/abook/book-analytics" in api
     assert "loadBook" in app
-    assert "MisjudgeAnalysis" in app
+    assert "AbookAnalysis" in app
+    assert "MisjudgeAnalysis" not in app
     assert "SelectionFunnel" in app
     assert "AccountsTable" in app
     assert "AccountDrawer" in app
@@ -96,3 +97,32 @@ def test_frontend_exposes_refresh_all_data_button_and_request_contract():
     assert "refresh-snapshots" in api
     assert "refreshing" in app
     assert "bookData.value = null" in app
+
+
+def test_frontend_exposes_abook_analysis_and_trade_detail_contract():
+    component_path = ROOT / "frontend/src/components/AbookAnalysis.vue"
+    assert component_path.exists()
+    component = component_path.read_text()
+    app = (ROOT / "frontend/src/App.vue").read_text()
+    api = (ROOT / "frontend/src/api.ts").read_text()
+
+    for text in ["Abook 分析", "筛选期", "验证期", "总盈利", "总亏损", "净 P&amp;L", "client_net_pnl"]:
+        assert text in component
+    assert "MisjudgeAnalysis" not in app
+    assert "fetchAccountDetail" in api
+    assert "trades" in (ROOT / "frontend/src/components/AccountDrawer.vue").read_text()
+
+
+def test_frontend_exposes_pnl_audit_and_funnel_criteria_contract():
+    app = (ROOT / "frontend/src/App.vue").read_text()
+    funnel = (ROOT / "frontend/src/components/SelectionFunnel.vue").read_text()
+    analysis = (ROOT / "frontend/src/components/AbookAnalysis.vue").read_text()
+
+    assert "2026-07-16" in app
+    for rule in ["min_trades", "min_active_days", "min_win_rate", "max_leverage_p95_ratio", "excluded_martingale_levels"]:
+        assert rule in funnel
+    assert "筛选标准" in funnel
+    assert "selection_client_net_pnl" in analysis
+    assert "june_client_net_pnl" in analysis
+    assert "5月 P&amp;L" in analysis and "6月 P&amp;L" in analysis and "7月 P&amp;L" in analysis
+    assert "profit_overview?.pnl_basis" in analysis
