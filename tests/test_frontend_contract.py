@@ -69,8 +69,8 @@ def test_frontend_default_rules_match_backend_july_tuned_profile():
     assert "min_profit_factor: 1.25" in app
     assert "min_payoff_ratio: 0.4" in app
     assert "max_top1_day_profit_contribution: 0.3" in app
-    assert "max_leverage_p95_ratio: 500" in app
-    assert "max_high_leverage_holding_seconds: 60" in app
+    assert "max_leverage_p95_ratio: 5000" in app
+    assert "max_high_leverage_holding_seconds: 300" in app
     assert "platforms: ['mt4', 'mt5', 'hh_mt5']" in app
     assert "enable_r4: false" in app
 
@@ -88,6 +88,15 @@ def test_frontend_uses_new_analysis_actions_and_book_lazy_load():
     assert "SelectionFunnel" in app
     assert "AccountsTable" in app
     assert "AccountDrawer" in app
+
+
+def test_frontend_reuses_analysis_token_for_book_analytics():
+    types = _source("types.ts")
+    api = _source("api.ts")
+    app = _source("App.vue")
+    assert "analysis_token" in types
+    assert "analysis_token: analysisToken" in api
+    assert "data.value.analysis_token" in app
 
 
 def test_frontend_exposes_book_metrics_and_account_paging():
@@ -200,6 +209,33 @@ def test_frontend_exposes_pnl_audit_and_funnel_criteria_contract():
     assert "may_client_net_pnl" in analysis
     assert "Bbook 公司影响" not in analysis
     assert "profit_overview?.pnl_basis" in analysis
+
+
+def test_frontend_uses_complete_population_for_overview_precision_and_book_analytics():
+    app = _source("App.vue")
+    analysis = _source("components/AbookAnalysis.vue")
+    assert "population_accounts" in app
+    assert "population_accounts" in analysis
+    assert "P&amp;L &gt; 0 / Abook 总人数" in analysis
+
+
+def test_book_performance_renders_pnl_distribution_as_stacked_bars():
+    books = _source("components/BookPerformance.vue")
+    assert "distributionCharts" in books
+    assert "distribution_by_period" in books
+    assert "stack: 'pnl-distribution'" in books
+    assert "type: 'bar'" in books
+
+
+def test_book_performance_renders_company_profit_comparison_as_chart():
+    books = _source("components/BookPerformance.vue")
+    assert "baseline_company_profit" in books
+    assert "after_routing_company_profit" in books
+    assert "incremental_change" in books
+    assert "name: '基准公司利润'" in books
+    assert "name: '分流后公司利润'" in books
+    assert "name: '增量变化'" in books
+    assert "v-for=\"row in analytics.routing_quality?.company_profit_comparison" not in books
 
 
 def test_frontend_account_lists_sort_and_drawer_hides_history_orders():

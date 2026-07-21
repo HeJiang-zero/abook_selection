@@ -19,8 +19,8 @@ export function refreshSnapshots(request: RequestModel) {
   })
 }
 
-export function fetchBookAnalytics(request: RequestModel, accounts: Array<{ platform: string; login: number }>) {
-  return postJson<BookAnalyticsPayload>('/api/abook/book-analytics', { analysis: request, abook_accounts: accounts })
+export function fetchBookAnalytics(request: RequestModel, accounts: Array<{ platform: string; login: number }>, analysisToken?: string, includeSymbols = true) {
+  return postJson<BookAnalyticsPayload>('/api/abook/book-analytics', { analysis: request, abook_accounts: accounts, analysis_token: analysisToken, include_symbols: includeSymbols })
 }
 
 export async function fetchAccountDetail(account: AccountRow, request: RequestModel): Promise<AccountDetailPayload> {
