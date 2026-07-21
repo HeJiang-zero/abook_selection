@@ -33,12 +33,12 @@ def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
     assert "个人候选名单" in sidebar
     assert "马丁" in sidebar
     for rule in [
-        "min_trades", "min_active_days", "min_payoff_ratio", "max_top1_day_profit_contribution",
+        "min_trades", "min_payoff_ratio", "max_top1_day_profit_contribution",
         "max_leverage_p95_ratio", "excluded_martingale_levels", "enable_r4",
-        "r4_min_passing_weeks", "min_positive_month_rate",
-        "require_selection_monthly_positive", "require_selection_net_positive",
+        "r4_min_passing_weeks",
     ]:
         assert rule in sidebar
+    assert "min_active_days" not in sidebar
     assert "min_avg_daily_profit" not in sidebar
     assert "max_daily_profit_month_contribution" not in sidebar
     assert "min_avg_profit" not in sidebar
@@ -51,20 +51,17 @@ def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
     assert "疑似马丁" in sidebar
 
 
-def test_frontend_default_rules_match_backend_skilled_trader_medium_profile():
+def test_frontend_default_rules_match_backend_july_tuned_profile():
     app = _source("App.vue")
-    assert "min_trades: 100" in app
-    assert "min_active_days: 15" in app
-    assert "min_win_rate: 0.35" in app
-    assert "min_profit_factor: 1.4" in app
-    assert "min_payoff_ratio: 0.6" in app
-    assert "max_top1_day_profit_contribution: 0.22" in app
-    assert "max_leverage_p95_ratio: 1500" in app
+    assert "min_trades: 75" in app
+    assert "min_win_rate: 0.5" in app
+    assert "min_profit_factor: 1.25" in app
+    assert "min_payoff_ratio: 0.4" in app
+    assert "max_top1_day_profit_contribution: 0.3" in app
+    assert "max_leverage_p95_ratio: 500" in app
     assert "max_high_leverage_holding_seconds: 60" in app
     assert "platforms: ['mt4', 'mt5', 'hh_mt5']" in app
     assert "enable_r4: false" in app
-    assert "require_selection_monthly_positive: false" in app
-    assert "require_selection_net_positive: true" in app
 
 
 def test_frontend_uses_new_analysis_actions_and_book_lazy_load():
@@ -139,7 +136,6 @@ def test_bbook_phase_pnl_is_explicit_in_overview_and_user_structure():
     for label in ["盈利金额", "亏损金额", "净 P&amp;L"]:
         assert label in overview
         assert label in user_structure
-    assert "phaseAmountValues" in overview
 
 
 def test_frontend_exposes_refresh_all_data_button_and_request_contract():

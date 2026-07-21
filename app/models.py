@@ -44,36 +44,32 @@ class SnapshotRefreshRequest(BaseModel):
 class AnalysisRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # Medium skilled-trader: keep edge/anti-luck gates; loosen sample and style only.
-    min_trades: int = Field(default=100, ge=0)
-    min_active_days: int = Field(default=15, ge=0)
-    min_active_months: int = Field(default=2, ge=0)
-    min_win_rate: float = Field(default=0.35, ge=0, le=1)
-    min_profit_factor: float = Field(default=1.4, ge=0)
-    # Floor for linked payoff: effective min is max(this, payoff_link_factor*(1-WR)/WR).
-    min_payoff_ratio: float = Field(default=0.6, ge=0)
-    payoff_link_factor: float = Field(default=1.0, ge=0)
+    min_trades: int = Field(default=75, ge=0)
+    # Retained for request compatibility; active trade days no longer gate Abook routing.
+    min_active_days: int = Field(default=0, ge=0)
+    min_win_rate: float = Field(default=0.5, ge=0, le=1)
+    min_profit_factor: float = Field(default=1.25, ge=0)
+    min_payoff_ratio: float = Field(default=0.4, ge=0)
     min_avg_daily_profit: float = Field(default=0.0, ge=0)
     min_avg_profit: float = Field(default=0.0, ge=0)
-    min_selection_monthly_consistency: float = Field(default=0.3, ge=0, le=1)
-    min_positive_month_rate: float = Field(default=0.8, ge=0, le=1)
-    max_top1_day_profit_contribution: float = Field(default=0.22, gt=0, le=1)
-    max_daily_profit_month_contribution: float = Field(default=0.5, gt=0, le=1)
-    max_leverage_p95_ratio: float = Field(default=1500.0, gt=0)
+    min_selection_monthly_consistency: float = Field(default=0.0, ge=0, le=1)
+    min_positive_month_rate: float = Field(default=0.5, ge=0, le=1)
+    max_top1_day_profit_contribution: float = Field(default=0.3, gt=0, le=1)
+    max_daily_profit_month_contribution: float = Field(default=0.6, gt=0, le=1)
+    max_leverage_p95_ratio: float = Field(default=500.0, gt=0)
     # Kept for old clients; service decisions use max_leverage_p95_ratio.
-    max_peak_leverage_ratio: float = Field(default=1500.0, gt=0)
+    max_peak_leverage_ratio: float = Field(default=500.0, gt=0)
     max_high_leverage_holding_seconds: float = Field(default=60.0, ge=0)
-    min_direction_day_rate_lower_bound: float = Field(default=0.52, ge=0, le=1)
-    min_return_drawdown_ratio: float = Field(default=1.0, ge=0)
+    min_direction_day_rate_lower_bound: float = Field(default=0.55, ge=0, le=1)
     min_stability_score: float = Field(default=70.0, ge=0, le=100)
-    high_confidence_trades: int = Field(default=120, ge=0)
+    high_confidence_trades: int = Field(default=100, ge=0)
     high_confidence_days: int = Field(default=30, ge=0)
     excluded_martingale_levels: List[Literal["extreme", "high", "medium", "low"]] = Field(
         default_factory=lambda: ["extreme", "high", "medium", "low"]
     )
-    # Allow one weaker month if positive_month_rate still clears the floor.
+    # Retained for old clients; monthly P&L is diagnostic/validation only and
+    # can no longer gate Abook routing.
     require_selection_monthly_positive: bool = False
-    require_selection_net_positive: bool = True
     # Disabled by default: July 2026 validation sweep found R4 reduced Abook net P&L.
     enable_r4: bool = False
     r4_min_passing_weeks: int = Field(default=1, ge=1, le=2)

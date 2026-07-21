@@ -158,28 +158,6 @@ def _profit_factor(gross_wins: Decimal, gross_losses: Decimal) -> Optional[float
     return _ratio(gross_wins, abs(gross_losses))
 
 
-def _effective_min_payoff_ratio(
-    win_rate: float,
-    min_payoff_ratio: float,
-    payoff_link_factor: float = 1.1,
-) -> float:
-    """Floor payoff, then raise it for low win-rate via PF-style linkage."""
-    if win_rate <= 0:
-        return float("inf")
-    linked = payoff_link_factor * (1.0 - win_rate) / win_rate
-    return max(float(min_payoff_ratio), linked)
-
-
-def _return_drawdown_filter_pass(
-    selection: dict[str, Any],
-    min_return_drawdown_ratio: float,
-) -> bool:
-    max_drawdown = _finite_decimal(selection.get("max_drawdown"))
-    if max_drawdown <= ZERO:
-        return True
-    return float(selection.get("return_drawdown_ratio") or 0.0) >= min_return_drawdown_ratio
-
-
 def _monthly_consistency_ratio(best_month_pnl: Any, worst_month_pnl: Any) -> float:
     """Measure the weaker directional month relative to the stronger month."""
     best = _finite_decimal(best_month_pnl)
@@ -778,11 +756,9 @@ def classify_accounts(
         validation_end=context.validation_end,
         min_trades=rules.min_trades,
         min_active_days=rules.min_active_days,
-        min_active_months=getattr(rules, "min_active_months", 2),
         min_win_rate=rules.min_win_rate,
         min_profit_factor=rules.min_profit_factor,
         min_payoff_ratio=rules.min_payoff_ratio,
-        payoff_link_factor=getattr(rules, "payoff_link_factor", 1.1),
         min_avg_daily_profit=rules.min_avg_daily_profit,
         min_avg_profit=rules.min_avg_profit,
         min_selection_monthly_consistency=rules.min_selection_monthly_consistency,
@@ -792,7 +768,6 @@ def classify_accounts(
         max_leverage_p95_ratio=rules.max_leverage_p95_ratio,
         max_high_leverage_holding_seconds=rules.max_high_leverage_holding_seconds,
         min_direction_day_rate_lower_bound=rules.min_direction_day_rate_lower_bound,
-        min_return_drawdown_ratio=getattr(rules, "min_return_drawdown_ratio", 1.0),
         min_stability_score=rules.min_stability_score,
         high_confidence_trades=rules.high_confidence_trades,
         high_confidence_days=rules.high_confidence_days,
@@ -802,7 +777,6 @@ def classify_accounts(
         excluded_martingale_levels=rules.excluded_martingale_levels,
         avg_profit_snapshot_status=avg_profit_snapshot_status,
         require_selection_monthly_positive=rules.require_selection_monthly_positive,
-        require_selection_net_positive=getattr(rules, "require_selection_net_positive", True),
         enable_r4=rules.enable_r4,
         r4_min_passing_weeks=rules.r4_min_passing_weeks,
     )
@@ -1243,27 +1217,24 @@ def build_two_stage_payload(
     selection_end: str,
     validation_start: str,
     validation_end: str,
-    min_trades: int = 100,
+    min_trades: int = 75,
     min_active_days: int = 0,
-    min_active_months: int = 0,
-    min_win_rate: float = 0.35,
-    min_profit_factor: float = 1.4,
-    min_payoff_ratio: float = 0.6,
-    payoff_link_factor: float = 0.0,
+    min_win_rate: float = 0.5,
+    min_profit_factor: float = 1.25,
+    min_payoff_ratio: float = 0.4,
     min_avg_daily_profit: float = 0.0,
     min_avg_profit: float = 0.0,
     min_selection_monthly_consistency: float = 0.0,
-    min_positive_month_rate: float = 0.0,
-    max_top1_day_profit_contribution: float = 0.22,
+    min_positive_month_rate: float = 0.5,
+    max_top1_day_profit_contribution: float = 0.3,
     max_daily_profit_month_contribution: float = 1.0,
-    max_leverage_p95_ratio: float = 1500.0,
+    max_leverage_p95_ratio: float = 500.0,
     max_peak_leverage_ratio: float | None = None,
     max_high_leverage_holding_seconds: float = 60.0,
     risk_snapshot_status: str = "not_loaded",
-    min_direction_day_rate_lower_bound: float = 0.0,
-    min_return_drawdown_ratio: float = 0.0,
+    min_direction_day_rate_lower_bound: float = 0.55,
     min_stability_score: float = 70.0,
-    high_confidence_trades: int = 120,
+    high_confidence_trades: int = 100,
     high_confidence_days: int = 30,
     personal_candidate_logins: set[int] | None = None,
     personal_candidate_info: dict[str, Any] | None = None,
@@ -1273,16 +1244,11 @@ def build_two_stage_payload(
     excluded_martingale_levels: Iterable[str] = ("extreme", "high", "medium", "low"),
     avg_profit_snapshot_status: str = "not_loaded",
     require_selection_monthly_positive: bool = False,
-    require_selection_net_positive: bool = False,
     enable_r4: bool = False,
     r4_min_passing_weeks: int = 1,
 ) -> dict[str, Any]:
-    """Build final Abook/Bbook routing and an independent validation-period readout.
-
-    AnalysisRules / API pass the skilled-trader durability gates. Direct callers
-    may leave those kwargs at these permissive defaults.
-    """
-    if max_peak_leverage_ratio is not None and max_leverage_p95_ratio == 1500.0:
+    """Build final Abook/Bbook routing and an independent validation-period readout."""
+    if max_peak_leverage_ratio is not None and max_leverage_p95_ratio == 500.0:
         max_leverage_p95_ratio = max_peak_leverage_ratio
     materialized = list(rows)
     # This is a hard safety boundary. The query already applies the same
@@ -1345,35 +1311,14 @@ def build_two_stage_payload(
         selection_months_positive = bool(selection_month_pnls) and all(
             value > ZERO for value in selection_month_pnls
         )
-        effective_min_payoff = _effective_min_payoff_ratio(
-            float(selection["win_rate"]),
-            min_payoff_ratio,
-            payoff_link_factor,
-        )
-        day_rate_lower = float(selection["positive_day_rate_ci95"][0])
         qualifies_sample = (
             selection["trade_count"] >= min_trades
-            and int(selection.get("active_trade_days") or 0) >= min_active_days
-            and int(selection.get("active_months") or 0) >= min_active_months
         )
         normal_abook_rules_pass = qualifies_sample and (
             selection["profit_factor"] is None or selection["profit_factor"] > min_profit_factor
         ) and selection["win_rate"] >= min_win_rate \
-            and selection["payoff_ratio"] >= effective_min_payoff \
+            and selection["payoff_ratio"] >= min_payoff_ratio \
             and selection["top_positive_day_concentration"] < max_top1_day_profit_contribution \
-            and selection["max_daily_profit_month_contribution"] <= max_daily_profit_month_contribution \
-            and float(selection.get("positive_month_rate") or 0.0) >= min_positive_month_rate \
-            and float(selection.get("monthly_consistency_ratio") or 0.0) >= min_selection_monthly_consistency \
-            and day_rate_lower >= min_direction_day_rate_lower_bound \
-            and _return_drawdown_filter_pass(selection, min_return_drawdown_ratio) \
-            and (
-                not require_selection_net_positive
-                or _finite_decimal(selection.get("client_net_pnl")) > ZERO
-            ) \
-            and (
-                not require_selection_monthly_positive
-                or selection_months_positive
-            ) \
             and _leverage_filter_pass(
                 selection, max_leverage_p95_ratio, max_high_leverage_holding_seconds
             )
@@ -1383,7 +1328,7 @@ def build_two_stage_payload(
             min_active_days=min_active_days,
             min_win_rate=min_win_rate,
             min_profit_factor=min_profit_factor,
-            min_payoff_ratio=effective_min_payoff,
+            min_payoff_ratio=min_payoff_ratio,
             min_positive_month_rate=min_positive_month_rate,
             min_selection_monthly_consistency=min_selection_monthly_consistency,
             max_top1_day_profit_contribution=max_top1_day_profit_contribution,
@@ -1395,6 +1340,8 @@ def build_two_stage_payload(
             high_confidence_trades=high_confidence_trades,
             high_confidence_days=high_confidence_days,
         )
+        # Day-distribution and stability metrics remain diagnostic only. They no
+        # longer gate Abook routing under the revised policy.
         r4_pass = bool(
             enable_r4
             and first.get("r4_pass", False)
@@ -1744,7 +1691,7 @@ def build_two_stage_payload(
         },
         "company_profit_definition": "book company profit = - user net trading P&L; Abook assumed company profit = 0",
         "pnl_basis": {
-            "client_net_pnl": "UTC ods_mt5_deals: sum(profit + storage + commission + fee) where is_deleted = 0 and action IN (0, 1); MT4 fallback: dwd_matched_trades.profit",
+            "client_net_pnl": "UTC ods_mt5_deals: sum(profit + storage + commission + fee) where is_deleted = 0 and action IN (0, 1)",
             "market_pnl": "UTC ods_mt5_deals: sum(profit) where is_deleted = 0 and action IN (0, 1)",
             "funding_pnl": "action IN (2, 3) is kept separately and is not included in client_net_pnl",
             "company_pnl": "Bbook company P&L = - client_net_pnl; Abook company P&L is theoretical 0 without external hedge execution data",
@@ -1848,8 +1795,6 @@ def build_two_stage_payload(
         },
         "rules": {
             "min_trades": min_trades,
-            "min_active_days": min_active_days,
-            "min_active_months": min_active_months,
             "enable_r4": enable_r4,
             "r4_min_passing_weeks": r4_min_passing_weeks,
             "r4_thresholds": {
@@ -1859,18 +1804,11 @@ def build_two_stage_payload(
                 "primary_trades": R4_MIN_PRIMARY_TRADES,
                 "soft_alignment": 1,
             },
-            "selection_months_positive_required": require_selection_monthly_positive,
-            "selection_net_positive_required": require_selection_net_positive,
+            "selection_months_positive_required": False,
             "min_win_rate": min_win_rate,
             "min_profit_factor": min_profit_factor,
             "min_payoff_ratio": min_payoff_ratio,
-            "payoff_link_factor": payoff_link_factor,
-            "min_positive_month_rate": min_positive_month_rate,
-            "min_selection_monthly_consistency": min_selection_monthly_consistency,
-            "min_direction_day_rate_lower_bound": min_direction_day_rate_lower_bound,
             "max_top1_day_profit_contribution": max_top1_day_profit_contribution,
-            "max_daily_profit_month_contribution": max_daily_profit_month_contribution,
-            "min_return_drawdown_ratio": min_return_drawdown_ratio,
             "avg_profit_snapshot_status": avg_profit_snapshot_status,
             "max_leverage_p95_ratio": max_leverage_p95_ratio,
             "max_high_leverage_holding_seconds": max_high_leverage_holding_seconds,
@@ -1878,11 +1816,17 @@ def build_two_stage_payload(
             "min_stability_score": min_stability_score,
             "stability_score_mode": "diagnostic_only",
             "excluded_martingale_levels": list(excluded_martingale_levels),
-            "profile": "skilled_trader_medium",
             "removed_selection_rules": [
+                "min_active_days",
                 "min_avg_daily_profit",
-                "min_avg_profit",
+                "min_positive_month_rate",
+                "min_selection_monthly_consistency",
+                "min_direction_day_rate_lower_bound",
+                "max_daily_profit_month_contribution",
                 "min_stability_score",
+                "min_avg_profit",
+                "selection_monthly_positive",
+                "selection_period_client_net_pnl",
             ],
             "test_accounts_excluded": True,
             "excluded_account_group_tokens": ["test", "demo"],
