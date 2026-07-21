@@ -21,6 +21,17 @@ def test_vite_project_and_build_output_are_present():
     assert (ROOT / "static" / "styles.css").exists()
 
 
+def test_built_frontend_does_not_send_removed_rule_fields():
+    bundle = (ROOT / "static" / "app.js").read_text()
+    for removed_rule in [
+        "min_active_months",
+        "payoff_link_factor",
+        "min_return_drawdown_ratio",
+        "require_selection_net_positive",
+    ]:
+        assert removed_rule not in bundle
+
+
 def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
     app = _source("App.vue")
     sidebar = (FRONTEND / "src" / "components" / "FilterSidebar.vue").read_text()
