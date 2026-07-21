@@ -16,29 +16,33 @@ def test_account_filters_reject_non_selection_dimensions(field):
         AnalysisFilters(**{field: ["Brazil"] if field == "countries" else 1})
 
 
-def test_default_strategy_filters_match_july_tuned_profile_without_monthly_pnl_gate():
+def test_default_strategy_filters_match_skilled_trader_medium_profile():
     request = AnalysisRequest()
 
-    assert request.rules.min_trades == 75
-    assert request.rules.min_active_days == 0
+    assert request.rules.min_trades == 100
+    assert request.rules.min_active_days == 15
+    assert request.rules.min_active_months == 2
     assert request.rules.require_selection_monthly_positive is False
+    assert request.rules.require_selection_net_positive is True
     assert request.rules.enable_r4 is False
     assert request.rules.r4_min_passing_weeks == 1
-    assert request.rules.min_profit_factor == 1.25
-    assert request.rules.min_payoff_ratio == 0.4
+    assert request.rules.min_profit_factor == 1.4
+    assert request.rules.min_payoff_ratio == 0.6
+    assert request.rules.payoff_link_factor == 1.0
     assert request.rules.min_avg_daily_profit == 0.0
     assert request.selection.start.isoformat() == "2026-05-01"
     assert request.validation.end.isoformat() == "2026-07-16"
-    assert request.rules.min_positive_month_rate == 0.5  # legacy field retained but ignored by routing
-    assert request.rules.max_top1_day_profit_contribution == 0.3
-    assert request.rules.max_daily_profit_month_contribution == 0.6
-    assert request.rules.max_leverage_p95_ratio == 500.0
-    assert request.rules.max_peak_leverage_ratio == 500.0
+    assert request.rules.min_positive_month_rate == 0.8
+    assert request.rules.max_top1_day_profit_contribution == 0.22
+    assert request.rules.max_daily_profit_month_contribution == 0.5
+    assert request.rules.max_leverage_p95_ratio == 1500.0
+    assert request.rules.max_peak_leverage_ratio == 1500.0
     assert request.rules.max_high_leverage_holding_seconds == 60.0
-    assert request.rules.min_direction_day_rate_lower_bound == 0.55
+    assert request.rules.min_direction_day_rate_lower_bound == 0.52
+    assert request.rules.min_return_drawdown_ratio == 1.0
     assert request.rules.min_stability_score == 70
-    assert request.rules.min_win_rate == 0.5
-    assert request.rules.min_selection_monthly_consistency == 0.0
+    assert request.rules.min_win_rate == 0.35
+    assert request.rules.min_selection_monthly_consistency == 0.3
     assert request.personal_candidate_list is False
     assert request.news_candidate_list is False
 

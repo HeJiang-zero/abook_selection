@@ -11,11 +11,14 @@ import AccountDrawer from './components/AccountDrawer.vue'
 import BookPerformance from './components/BookPerformance.vue'
 
 const defaultRules: Record<string, number | string[] | boolean> = {
-  min_trades: 75, min_win_rate: 0.5, min_profit_factor: 1.25,
-  min_payoff_ratio: 0.4,
-  max_top1_day_profit_contribution: 0.3,
-  max_leverage_p95_ratio: 500, max_high_leverage_holding_seconds: 60,
-  high_confidence_trades: 100, high_confidence_days: 30,
+  min_trades: 100, min_active_days: 15, min_active_months: 2, min_win_rate: 0.35, min_profit_factor: 1.4,
+  min_payoff_ratio: 0.6, payoff_link_factor: 1.0,
+  min_positive_month_rate: 0.8, min_selection_monthly_consistency: 0.3,
+  max_top1_day_profit_contribution: 0.22, max_daily_profit_month_contribution: 0.5,
+  max_leverage_p95_ratio: 1500, max_high_leverage_holding_seconds: 60,
+  min_direction_day_rate_lower_bound: 0.52, min_return_drawdown_ratio: 1.0,
+  high_confidence_trades: 120, high_confidence_days: 30,
+  require_selection_monthly_positive: false, require_selection_net_positive: true,
   enable_r4: false, r4_min_passing_weeks: 1,
   excluded_martingale_levels: ['extreme', 'high', 'medium', 'low'],
 }

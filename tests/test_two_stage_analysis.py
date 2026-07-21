@@ -340,7 +340,7 @@ def test_two_stage_analysis_requires_strict_top1_contribution_and_skips_leverage
     assert accounts[34]["book"] == "abook"
 
 
-def test_abook_selection_uses_trade_quality_but_not_active_days_or_removed_quality_gates():
+def test_abook_selection_requires_active_days_when_configured():
     rows = [
         row(101, "05", trades=1, wins=1, losses=0, market=10, net=10,
             gross_wins=10, gross_losses=0, active_days=1, daily_sum=10),
@@ -369,11 +369,11 @@ def test_abook_selection_uses_trade_quality_but_not_active_days_or_removed_quali
     )
 
     account = result["accounts"][0]
-    assert account["book"] == "abook"
+    assert account["book"] == "bbook"
     assert account["selection_months_positive"] is True
 
 
-def test_abook_selection_does_not_require_positive_selection_months():
+def test_abook_selection_can_require_positive_selection_months():
     rows = [
         row(102, "05", trades=1, wins=1, losses=0, market=10, net=10,
             gross_wins=10, gross_losses=0, active_days=1, daily_sum=10),
@@ -400,15 +400,15 @@ def test_abook_selection_does_not_require_positive_selection_months():
         min_direction_day_rate_lower_bound=0,
         min_stability_score=0,
         require_selection_monthly_positive=True,
+        require_selection_net_positive=False,
     )
 
     account = result["accounts"][0]
     assert account["selection"]["client_net_pnl"] > 0
     assert account["selection_months_positive"] is False
-    assert account["book"] == "abook"
-    assert result["rules"]["selection_months_positive_required"] is False
-    assert "selection_monthly_positive" in result["rules"]["removed_selection_rules"]
-    assert "selection_period_client_net_pnl" in result["rules"]["removed_selection_rules"]
+    assert account["book"] == "bbook"
+    assert result["rules"]["selection_months_positive_required"] is True
+    assert result["rules"]["profile"] == "skilled_trader_medium"
 
 
 def test_r4_is_an_independent_selection_channel_for_may_june_data_only():

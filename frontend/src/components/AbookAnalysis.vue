@@ -24,6 +24,13 @@ function phasePnl(account: AccountRow, phase: Phase): number {
   return amount(account[phase]?.client_net_pnl)
 }
 
+function phaseAmountValues(account: AccountRow, phase: Phase): number[] {
+  const monthly = (account.monthly || [])
+    .filter((item: any) => item.phase === phase)
+    .map((item: any) => amount(item.client_net_pnl))
+  return monthly.length ? monthly : [phasePnl(account, phase)]
+}
+
 function monthPnl(account: AccountRow, month: string): number {
   const row = (account.monthly || []).find((item: any) => item.month === month)
   return amount(row?.client_net_pnl)
@@ -31,8 +38,9 @@ function monthPnl(account: AccountRow, month: string): number {
 
 function phaseSummary(accounts: AccountRow[], phase: Phase) {
   const values = accounts.map(account => phasePnl(account, phase))
-  const totalProfit = values.filter(value => value > 0).reduce((sum, value) => sum + value, 0)
-  const totalLoss = values.filter(value => value < 0).reduce((sum, value) => sum + Math.abs(value), 0)
+  const amountValues = accounts.flatMap(account => phaseAmountValues(account, phase))
+  const totalProfit = amountValues.filter(value => value > 0).reduce((sum, value) => sum + value, 0)
+  const totalLoss = amountValues.filter(value => value < 0).reduce((sum, value) => sum + Math.abs(value), 0)
   const trades = accounts.reduce((sum, account) => sum + amount(account[phase]?.trade_count), 0)
   const wins = accounts.reduce((sum, account) => sum + amount(account[phase]?.winning_trades), 0)
   return {
