@@ -99,6 +99,15 @@ def test_frontend_reuses_analysis_token_for_book_analytics():
     assert "data.value.analysis_token" in app
 
 
+def test_frontend_reports_empty_or_malformed_json_responses_with_endpoint_context():
+    api = _source("api.ts")
+    assert "async function readJsonResponse" in api
+    assert "const text = await response.text()" in api
+    assert "Empty JSON response from ${path}" in api
+    assert "Invalid JSON response from ${path}" in api
+    assert "JSON.parse(text)" in api
+
+
 def test_frontend_exposes_book_metrics_and_account_paging():
     books = (FRONTEND / "src" / "components" / "BookPerformance.vue").read_text()
     accounts = (FRONTEND / "src" / "components" / "AccountsTable.vue").read_text()
