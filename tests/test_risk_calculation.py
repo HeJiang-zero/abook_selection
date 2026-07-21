@@ -60,6 +60,8 @@ def test_daily_risk_prefers_turnover_when_the_snapshot_provides_it():
 def test_risk_snapshot_query_uses_opening_day_for_opening_leverage():
     source = Path("scripts/build_user_risk_snapshot.py").read_text()
 
+    assert "USER_SOURCE_SQL" in source
+    assert "risk.ods_mt4_users FINAL" in Path("app/queries.py").read_text()
     assert "toDate(mt.exit_time) AS trade_date" in source
     assert "sum(abs(toFloat64(mt.turnover))) AS daily_turnover" in source
     assert "mt.exit_time >= {selection_start:Date}" in source

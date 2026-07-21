@@ -14,14 +14,14 @@ const defaultRules: Record<string, number | string[] | boolean> = {
   min_trades: 75, min_win_rate: 0.5, min_profit_factor: 1.25,
   min_payoff_ratio: 0.4,
   max_top1_day_profit_contribution: 0.3,
-  max_leverage_p95_ratio: 5000, max_high_leverage_holding_seconds: 300,
+  max_leverage_p95_ratio: 500, max_high_leverage_holding_seconds: 60,
   high_confidence_trades: 100, high_confidence_days: 30,
   enable_r4: false, r4_min_passing_weeks: 1,
   excluded_martingale_levels: ['extreme', 'high', 'medium', 'low'],
 }
 const request = ref<RequestModel>({
   selection: { start: '2026-05-01', end: '2026-06-30' }, validation: { start: '2026-07-01', end: '2026-07-16' },
-  platforms: ['mt5', 'hh_mt5'], filters: { groups: [], logins: [] }, rules: { ...defaultRules }, personal_candidate_list: false, news_candidate_list: false,
+  platforms: ['mt4', 'mt5', 'hh_mt5'], filters: { groups: [], logins: [] }, rules: { ...defaultRules }, personal_candidate_list: false, news_candidate_list: false,
 })
 const data = ref<AnalysisPayload>({ accounts: [] })
 const activeTab = ref<Tab>('overview')

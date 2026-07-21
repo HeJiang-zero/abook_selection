@@ -169,7 +169,7 @@ def _grid() -> Iterable[RuleCombo]:
     payoff_ratios = [0.4, 0.5, 0.6, 0.8]
     top1 = [0.20, 0.25, 0.30, 0.40, 0.50]
     leverage = [500, 1000, 2000, 5000]
-    hold_seconds = [300.0]
+    hold_seconds = [60.0]
     r4_opts = [(True, 1), (True, 2), (False, 1)]
     for values in itertools.product(
         trades, win_rates, profit_factors, payoff_ratios, top1, leverage, hold_seconds, r4_opts
@@ -193,7 +193,7 @@ def main() -> int:
     request = AnalysisRequest(
         selection=AnalysisPeriod(start=date(2026, 5, 1), end=date(2026, 6, 30)),
         validation=AnalysisPeriod(start=date(2026, 7, 1), end=date(2026, 7, 16)),
-        platforms=["mt5", "hh_mt5"],
+        platforms=["mt4", "mt5", "hh_mt5"],
         rules=AnalysisRules(),
         personal_candidate_list=False,
         news_candidate_list=False,

@@ -15,7 +15,7 @@ import clickhouse_connect
 
 from app.config import get_settings, load_env_file
 from app.exposure import build_unmatched_open_events, reconstruct_peak_exposure
-from app.queries import ALLOWED_PLATFORMS
+from app.queries import ALLOWED_PLATFORMS, USER_SOURCE_SQL
 from app.risk import RISK_CALCULATION_VERSION, snapshot_path
 
 
@@ -174,7 +174,7 @@ def _find_column(columns: set[str], candidates: tuple[str, ...], table: str) -> 
     raise RuntimeError(f"{table} is missing one of columns: {', '.join(candidates)}")
 
 
-def _chunks(values: list[int], size: int = 100) -> list[list[int]]:
+def _chunks(values: list[int], size: int = 2000) -> list[list[int]]:
     return [values[index:index + size] for index in range(0, len(values), size)]
 
 
@@ -202,7 +202,7 @@ def _fetch_balance_rows(
     query = f"""
     WITH selected_users AS (
         SELECT platform, toUInt64(login) AS login
-        FROM risk.ods_mt5_users FINAL
+        FROM {USER_SOURCE_SQL} AS user_source
         WHERE is_deleted = 0
           AND has({{platforms:Array(String)}}, platform)
           AND positionCaseInsensitive(`group`, 'test') = 0
@@ -329,11 +329,11 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
         database=settings.clickhouse_database,
         secure=settings.clickhouse_secure,
     )
-    users_query = """
+    users_query = f"""
     SELECT platform, login, any(`group`) AS account_group
-    FROM risk.ods_mt5_users FINAL
+    FROM {USER_SOURCE_SQL} AS user_source
     WHERE is_deleted = 0
-      AND has({platforms:Array(String)}, platform)
+      AND has({{platforms:Array(String)}}, platform)
       AND positionCaseInsensitive(`group`, 'test') = 0
       AND positionCaseInsensitive(`group`, 'demo') = 0
     GROUP BY platform, login
@@ -343,12 +343,12 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
     users = [dict(zip(users_result.column_names, values)) for values in users_result.result_rows]
     logins = sorted({int(row["login"]) for row in users})
 
-    daily_query = """
+    daily_query = f"""
     WITH users AS (
         SELECT platform, login
-        FROM risk.ods_mt5_users FINAL
+        FROM {USER_SOURCE_SQL} AS user_source
         WHERE is_deleted = 0
-          AND has({platforms:Array(String)}, platform)
+          AND has({{platforms:Array(String)}}, platform)
           AND positionCaseInsensitive(`group`, 'test') = 0
           AND positionCaseInsensitive(`group`, 'demo') = 0
         GROUP BY platform, login
@@ -360,8 +360,8 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
         sum(abs(toFloat64(mt.turnover))) AS daily_turnover
     FROM risk.dwd_matched_trades AS mt FINAL
     INNER JOIN users AS u ON mt.platform = u.platform AND mt.login = u.login
-    WHERE mt.exit_time >= {selection_start:Date}
-      AND mt.exit_time < {selection_end_exclusive:Date}
+    WHERE mt.exit_time >= {{selection_start:Date}}
+      AND mt.exit_time < {{selection_end_exclusive:Date}}
     GROUP BY mt.platform, mt.login, trade_date
     """
     daily_result = client.query(daily_query, parameters={
@@ -377,7 +377,9 @@ def build_snapshot(selection_start: str, selection_end: str, platforms: list[str
     if os.getenv("ABOOK_INCLUDE_CONCURRENT_EXPOSURE", "1").lower() not in {"0", "false", "no"}:
         matched_exposure_rows = _fetch_matched_exposure_rows(client, selected, selection_start, selection_end)
         raw_open_deals = []
-        for table, table_platform in (("risk.ods_mt4_deals", "mt4"), ("risk.ods_mt5_deals", "mt5")):
+        # MT4 has no ods_mt4_deals table in risk; matched_trades is its
+        # canonical exposure source. Keep raw-deal enrichment for MT5 only.
+        for table, table_platform in (("risk.ods_mt5_deals", "mt5"),):
             raw_open_deals.extend(_fetch_raw_open_deal_rows(client, table, table_platform, selected, logins, selection_end))
         open_events = build_unmatched_open_events(raw_open_deals, matched_exposure_rows)
         concurrent_exposure = reconstruct_peak_exposure(matched_exposure_rows + open_events, balance_rows)

@@ -47,7 +47,7 @@ def main() -> None:
     parser.add_argument("--selection-end", default="2026-06-30")
     parser.add_argument("--platform", action="append", dest="platforms")
     args = parser.parse_args()
-    platforms = args.platforms or ["mt5", "hh_mt5"]
+    platforms = args.platforms or ["mt4", "mt5", "hh_mt5"]
     payload = build_snapshot(args.selection_start, args.selection_end, platforms)
     output = output_path()
     output.parent.mkdir(parents=True, exist_ok=True)

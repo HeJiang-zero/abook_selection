@@ -49,7 +49,7 @@ def test_refresh_snapshots_builds_all_four_payloads_with_current_selection(monke
     }
     monkeypatch.setattr(snapshot_refresh, "snapshot_paths", lambda: paths)
 
-    result = snapshot_refresh.refresh_snapshots("2026-05-01", "2026-06-30", ["mt5"])
+    result = snapshot_refresh.refresh_snapshots("2026-05-01", "2026-06-30", ["mt4", "mt5", "hh_mt5"])
 
     assert result["status"] == "ready"
     assert {(name, start, end) for name, start, end, _ in calls} == {
@@ -59,6 +59,7 @@ def test_refresh_snapshots_builds_all_four_payloads_with_current_selection(monke
         ("r4", "2026-05-01", "2026-06-30"),
     }
     assert all(path.exists() for path in paths.values())
+    assert all(platforms == ["mt4", "mt5", "hh_mt5"] for _, _, _, platforms in calls)
 
 
 def test_refresh_snapshots_keeps_existing_files_when_a_builder_fails(monkeypatch, tmp_path):

@@ -58,7 +58,9 @@ def test_frontend_default_rules_match_backend_july_tuned_profile():
     assert "min_profit_factor: 1.25" in app
     assert "min_payoff_ratio: 0.4" in app
     assert "max_top1_day_profit_contribution: 0.3" in app
-    assert "max_leverage_p95_ratio: 5000" in app
+    assert "max_leverage_p95_ratio: 500" in app
+    assert "max_high_leverage_holding_seconds: 60" in app
+    assert "platforms: ['mt4', 'mt5', 'hh_mt5']" in app
     assert "enable_r4: false" in app
 
 
@@ -118,6 +120,24 @@ def test_frontend_has_martingale_drawer_and_responsive_sidebar_contract():
     assert "overflow-y: auto" in css
 
 
+def test_account_drawer_de_extreme_rows_scope_v_if_after_v_for():
+    drawer = (FRONTEND / "src" / "components" / "AccountDrawer.vue").read_text()
+
+    assert '<template v-for="item in deExtremeItems" :key="item[0]">' in drawer
+    assert '<tr v-if="detail.de_extreme?.[item[0]] !== undefined">' in drawer
+    assert '<tr v-for="item in deExtremeItems"' not in drawer
+
+
+def test_bbook_phase_pnl_is_explicit_in_overview_and_user_structure():
+    overview = _source("components/AbookAnalysis.vue")
+    user_structure = _source("components/BookPerformance.vue")
+
+    assert "Bbook 分析" in overview
+    for label in ["盈利金额", "亏损金额", "净 P&amp;L"]:
+        assert label in overview
+        assert label in user_structure
+
+
 def test_frontend_exposes_refresh_all_data_button_and_request_contract():
     sidebar = (ROOT / "frontend/src/components/FilterSidebar.vue").read_text()
     api = (ROOT / "frontend/src/api.ts").read_text()
@@ -137,7 +157,7 @@ def test_frontend_exposes_abook_analysis_and_account_detail_contract():
     app = (ROOT / "frontend/src/App.vue").read_text()
     api = (ROOT / "frontend/src/api.ts").read_text()
 
-    for text in ["Abook 分析", "筛选期", "验证期", "总盈利", "总亏损", "净 P&amp;L", "client_net_pnl"]:
+    for text in ["Abook 分析", "筛选期", "验证期", "盈利金额", "亏损金额", "净 P&amp;L", "client_net_pnl"]:
         assert text in component
     assert "MisjudgeAnalysis" not in app
     assert "fetchAccountDetail" in api
@@ -178,15 +198,25 @@ def test_frontend_account_lists_sort_and_drawer_hides_history_orders():
     assert "<details" in analysis
     assert "sortBy" in analysis
     assert "sortDirection" in analysis
-    for label in ["最大盈利日贡献率", "前三盈利日贡献率", "最大盈利订单贡献率", "最佳品种贡献率", "原始净利润", "去掉最大盈利日", "Entry 5s Markout"]:
+    for label in ["最大盈利日贡献率", "前三盈利日贡献率", "最大盈利订单贡献率", "最佳品种贡献率", "原始净利润", "去掉最大盈利日", "Entry +1s / +5s", "Matched trades 平均 bps"]:
         assert label in drawer
     assert "历史交易明细" not in drawer
 
 
-def test_frontend_keeps_account_drawer_open_during_analysis_refresh():
+def test_frontend_bbook_leakage_has_reason_tags_and_reuses_account_drawer():
+    analysis = (FRONTEND / "src" / "components" / "AbookAnalysis.vue").read_text()
+
+    assert "Bbook 原因" in analysis
+    assert "bbook_reason_tags" in analysis
+    assert "emit('open'" in analysis
+    assert "leakageAccount" in analysis
+
+
+def test_frontend_closes_account_drawer_only_when_backdrop_is_clicked():
     app = (FRONTEND / "src/App.vue").read_text()
     drawer = (FRONTEND / "src/components/AccountDrawer.vue").read_text()
     assert "preserveAccount" in app
     assert "selectedAccount.value = null" not in app.split("async function loadAnalysis", 1)[1].split("async function openAccount", 1)[0]
-    assert '@click.self="emit(\'close\')"' not in drawer
+    assert '@click.self="emit(\'close\')"' in drawer
     assert '@click.stop' in drawer
+    assert 'class="close"' not in drawer

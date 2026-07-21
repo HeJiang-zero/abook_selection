@@ -125,6 +125,17 @@ onBeforeUnmount(() => {
     <div class="panel-head"><div><span class="kicker">BOOK ANALYTICS</span><h2>Abook / Bbook 量化分析</h2></div><span class="hint">仅实际 Abook 与 Bbook</span></div>
     <div v-if="loading" class="empty">加载 Book 分析…</div>
     <template v-else-if="analytics">
+      <div v-if="activeTab === 'users'" class="phase-cards book-phase-overview">
+        <article v-for="book in books" :key="book" class="book-card">
+          <div class="book-section-title"><h3>{{ bookLabel(book) }} 分阶段 P&amp;L</h3><span class="hint">客户 P&amp;L 口径</span></div>
+          <div v-for="phase in phases" :key="phase" class="metric-card">
+            <span class="kicker">{{ phaseLabel(phase) }}</span>
+            <div class="list-row"><span>盈利金额</span><b class="positive">{{ money(analytics.pnl_structure?.[book]?.phase_summary?.[phase]?.positive_pnl) }}</b></div>
+            <div class="list-row"><span>亏损金额</span><b class="negative">{{ money(analytics.pnl_structure?.[book]?.phase_summary?.[phase]?.negative_pnl) }}</b></div>
+            <div class="list-row"><span>净 P&amp;L</span><b :class="pnlClass(analytics.pnl_structure?.[book]?.phase_summary?.[phase]?.net_pnl)">{{ money(analytics.pnl_structure?.[book]?.phase_summary?.[phase]?.net_pnl) }}</b></div>
+          </div>
+        </article>
+      </div>
       <div class="book-grid"><article v-for="book in books" :key="book" class="book-card"><h3>{{ bookLabel(book) }}</h3><p>筛选期客户净 P&amp;L <b :class="pnlClass(analytics.pnl_structure?.[book]?.selection?.net_pnl)">{{ money(analytics.pnl_structure?.[book]?.selection?.net_pnl) }}</b></p><p>验证期客户净 P&amp;L <b :class="pnlClass(analytics.pnl_structure?.[book]?.validation?.net_pnl)">{{ money(analytics.pnl_structure?.[book]?.validation?.net_pnl) }}</b></p><p>验证期盈利/亏损/中性 <b>{{ analytics.pnl_structure?.[book]?.validation?.profitable_accounts ?? 0 }} / {{ analytics.pnl_structure?.[book]?.validation?.loss_accounts ?? 0 }} / {{ analytics.pnl_structure?.[book]?.validation?.neutral_accounts ?? 0 }}</b></p><p v-if="book === 'bbook'">Bbook 公司 P&amp;L <b :class="pnlClass(analytics.pnl_structure?.[book]?.validation?.company_profit_if_current_book)">{{ money(analytics.pnl_structure?.[book]?.validation?.company_profit_if_current_book) }}</b></p><p v-else>Abook 公司 P&amp;L <b>不由客户 P&amp;L 推断</b></p><p>验证期最大回撤 <b class="negative">{{ money(analytics.pnl_structure?.[book]?.max_drawdown) }}</b></p><p>Top 5 客户 P&amp;L 绝对集中度 <b>{{ pct(analytics.pnl_structure?.[book]?.profit_concentration?.top_5?.absolute_share) }}</b></p></article></div>
       <template v-if="activeTab === 'users'"><div ref="cumulativeChart" class="book-chart"></div><div ref="dailyChart" class="book-chart"></div></template>
       <template v-else><p v-if="activeTab === 'risk'" class="hint">杠杆筛选恢复使用成交额 ÷ 当日最新余额；并发未平仓敞口作为补充估计，最终使用两者 P95 较高值。柱状图按用户 P95 杠杆分布统计。</p><div ref="chart" class="book-chart"></div></template>

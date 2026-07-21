@@ -48,13 +48,12 @@ function renderMarkoutChart(target: HTMLDivElement | null, kind: 'entry' | 'exit
   const instance = chart || echarts.init(target)
   instance.setOption({
     tooltip: { trigger: 'axis' },
-    legend: { top: 0, data: ['正向平均 bps', '负向平均 bps'] },
+    legend: { top: 0, data: ['Matched trades 平均 bps'] },
     grid: { left: 42, right: 16, top: 30, bottom: 28 },
     xAxis: { type: 'category', data: curve.map((point: any) => `${point.offset_ms}ms`) },
     yAxis: { type: 'value', name: 'bps' },
     series: [
-      { name: '正向平均 bps', type: 'line', connectNulls: true, data: curve.map((point: any) => point.positive_bps) },
-      { name: '负向平均 bps', type: 'line', connectNulls: true, data: curve.map((point: any) => point.negative_bps) },
+      { name: 'Matched trades 平均 bps', type: 'line', connectNulls: true, data: curve.map((point: any) => point.mean_bps) },
     ],
   })
   return instance
@@ -70,9 +69,8 @@ watch(() => props.detail, renderMarkoutCharts, { deep: true })
 onBeforeUnmount(() => { entryChart?.dispose(); exitChart?.dispose() })
 </script>
 <template>
-  <div v-if="account" class="drawer-backdrop">
+  <div v-if="account" class="drawer-backdrop" @click.self="emit('close')">
     <aside class="drawer" @click.stop>
-      <button type="button" class="close" @click="emit('close')">×</button>
       <span class="kicker">ACCOUNT DETAIL</span>
       <h2>{{ account.platform }} / {{ account.login }}</h2>
       <p>{{ account.account_group }} · {{ account.book === 'abook' ? 'Abook' : 'Bbook' }} · {{ account.selection_source }}<span v-if="account.july_new_user"> · 7月新用户</span><span v-if="account.r4_pass"> · R4</span></p>
@@ -125,13 +123,13 @@ onBeforeUnmount(() => { entryChart?.dispose(); exitChart?.dispose() })
 
         <template v-if="Object.keys(detail.de_extreme || {}).length">
           <h3>去极值测试（保留原始结果）</h3>
-          <div class="table-scroll"><table><thead><tr><th>测试</th><th>净利润</th></tr></thead><tbody><tr v-for="item in deExtremeItems" v-if="detail.de_extreme?.[item[0]] !== undefined" :key="item[0]"><td>{{ item[1] }}</td><td :class="number(detail.de_extreme?.[item[0]]) >= 0 ? 'positive' : 'negative'">{{ format(detail.de_extreme?.[item[0]]) }}</td></tr></tbody></table></div>
+          <div class="table-scroll"><table><thead><tr><th>测试</th><th>净利润</th></tr></thead><tbody><template v-for="item in deExtremeItems" :key="item[0]"><tr v-if="detail.de_extreme?.[item[0]] !== undefined"><td>{{ item[1] }}</td><td :class="number(detail.de_extreme?.[item[0]]) >= 0 ? 'positive' : 'negative'">{{ format(detail.de_extreme?.[item[0]]) }}</td></tr></template></tbody></table></div>
         </template>
 
         <template v-if="detail.markout && Object.keys(detail.markout).length">
-          <h3>±5s Markout</h3>
-          <div v-if="detail.markout.entry" class="markout-block"><div class="list-row"><span>Entry 5s Markout</span><b>{{ text(detail.markout.entry.positive_5s_bps) }} / {{ text(detail.markout.entry.negative_5s_bps) }} bps</b></div><div ref="entryMarkoutChart" class="markout-chart"></div></div>
-          <div v-if="detail.markout.exit" class="markout-block"><div class="list-row"><span>Exit 5s Markout</span><b>{{ text(detail.markout.exit.positive_5s_bps) }} / {{ text(detail.markout.exit.negative_5s_bps) }} bps</b></div><div ref="exitMarkoutChart" class="markout-chart"></div></div>
+          <h3>Markout（Matched trades 时间序列）</h3>
+          <div v-if="detail.markout.entry" class="markout-block"><div class="list-row"><span>Entry +1s / +5s</span><b>{{ text(detail.markout.entry.primary_bps) }} / {{ text(detail.markout.entry.mean_5s_bps) }} bps</b></div><div ref="entryMarkoutChart" class="markout-chart"></div></div>
+          <div v-if="detail.markout.exit" class="markout-block"><div class="list-row"><span>Exit +1s / +5s</span><b>{{ text(detail.markout.exit.primary_bps) }} / {{ text(detail.markout.exit.mean_5s_bps) }} bps</b></div><div ref="exitMarkoutChart" class="markout-chart"></div></div>
         </template>
       </template>
       <div v-else class="empty">暂无用户指标</div>

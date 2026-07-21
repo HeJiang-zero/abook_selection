@@ -11,6 +11,7 @@ from .queries import (
     build_analysis_query,
     build_book_symbol_query,
     build_daily_pnl_query,
+    USER_SOURCE_SQL,
 )
 
 
@@ -103,9 +104,9 @@ class ClickHouseRepository:
         if self.client is None:
             raise RepositoryConfigurationError("CLICKHOUSE_PASSWORD is not configured")
         result = self.client.query(
-            """
+            f"""
             SELECT platform, `group`
-            FROM risk.ods_mt5_users FINAL
+            FROM {USER_SOURCE_SQL} AS user_source
             WHERE is_deleted = 0
               AND positionCaseInsensitive(`group`, 'test') = 0
               AND positionCaseInsensitive(`group`, 'demo') = 0

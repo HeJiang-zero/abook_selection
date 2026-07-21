@@ -12,7 +12,7 @@ import clickhouse_connect
 
 from app.config import get_settings, load_env_file
 from app.martingale import snapshot_path
-from app.queries import ALLOWED_PLATFORMS
+from app.queries import ALLOWED_PLATFORMS, USER_SOURCE_SQL
 
 
 RISK_LEVEL_ORDER = ("extreme", "high", "medium", "low")
@@ -176,6 +176,7 @@ def build_snapshot(
         OR confirmed_windows > 0
     ORDER BY platform, login
     """
+    query = query.replace("FROM risk.ods_mt5_users FINAL", f"FROM {USER_SOURCE_SQL} AS user_source")
     result = client.query(query, parameters={
         "platforms": selected,
         "window_type": window_type,

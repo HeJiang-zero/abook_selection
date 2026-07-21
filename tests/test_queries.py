@@ -11,6 +11,7 @@ def test_analysis_query_has_final_and_delete_filter():
     )
 
     assert "risk.ods_mt5_users FINAL" in query
+    assert "risk.ods_mt4_users FINAL" in query
     assert "FROM risk.dwd_matched_trades AS mt FINAL" in query
     assert "is_deleted = 0" in query
     assert params["group_0"] == ["real\\FPlive"]
@@ -167,10 +168,11 @@ def test_daily_pnl_query_aggregates_utc_deals_and_reuses_account_boundaries():
     )
 
     assert "risk.ods_mt5_users FINAL" in query
+    assert "risk.ods_mt4_users FINAL" in query
     assert "FROM risk.ods_mt5_deals AS d FINAL" in query
     assert "toDate(d.time) AS trade_date" in query
     assert "action IN (0, 1)" in query
-    assert "sumIf(profit + storage + commission + fee, action IN (0, 1)) AS client_net_pnl" in query
+    assert "toFloat64(sumIf(profit + storage + commission + fee, action IN (0, 1))) AS client_net_pnl" in query
     assert "is_deleted = 0" in query
     assert "positionCaseInsensitive" in query
     assert "'test') = 0" in query
@@ -226,7 +228,8 @@ def test_account_detail_query_always_filters_demo_and_test_accounts():
 
     query, _ = build_account_detail_query("mt5", 123, "2026-05-01", "2026-07-13")
 
-    assert "risk.ods_mt5_users AS u FINAL" in query
+    assert "risk.ods_mt5_users FINAL" in query
+    assert "risk.ods_mt4_users FINAL" in query
     assert "positionCaseInsensitive(u.`group`, 'test') = 0" in query
     assert "positionCaseInsensitive(u.`group`, 'demo') = 0" in query
 

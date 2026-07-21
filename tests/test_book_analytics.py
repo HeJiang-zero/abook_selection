@@ -76,6 +76,10 @@ def test_book_analytics_reports_period_profitability_and_distribution():
     assert bbook_selection["profitable_accounts"] == 0
     assert bbook_selection["loss_accounts"] == 1
     assert bbook_selection["neutral_accounts"] == 1
+    bbook_validation = result["pnl_structure"]["bbook"]["validation"]
+    assert bbook_validation["positive_pnl"] == 0.0
+    assert bbook_validation["negative_pnl"] == -120.0
+    assert bbook_validation["net_pnl"] == -120.0
     assert bbook_selection["negative_pnl"] == -200.0
     assert {row["month"] for row in result["pnl_structure"]["abook"]["monthly"]} == {"2026-05", "2026-06", "2026-07", "selection_total"}
     selection_total = next(row for row in result["pnl_structure"]["abook"]["monthly"] if row["month"] == "selection_total")

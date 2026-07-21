@@ -56,10 +56,10 @@ class AnalysisRules(BaseModel):
     min_positive_month_rate: float = Field(default=0.5, ge=0, le=1)
     max_top1_day_profit_contribution: float = Field(default=0.3, gt=0, le=1)
     max_daily_profit_month_contribution: float = Field(default=0.6, gt=0, le=1)
-    max_leverage_p95_ratio: float = Field(default=5000.0, gt=0)
+    max_leverage_p95_ratio: float = Field(default=500.0, gt=0)
     # Kept for old clients; service decisions use max_leverage_p95_ratio.
-    max_peak_leverage_ratio: float = Field(default=5000.0, gt=0)
-    max_high_leverage_holding_seconds: float = Field(default=300.0, ge=0)
+    max_peak_leverage_ratio: float = Field(default=500.0, gt=0)
+    max_high_leverage_holding_seconds: float = Field(default=60.0, ge=0)
     min_direction_day_rate_lower_bound: float = Field(default=0.55, ge=0, le=1)
     min_stability_score: float = Field(default=70.0, ge=0, le=100)
     high_confidence_trades: int = Field(default=100, ge=0)
@@ -79,7 +79,10 @@ class AnalysisRules(BaseModel):
         # Older clients only send max_peak_leverage_ratio. Treat that value as
         # the p95 threshold during the migration, without using peak leverage
         # in the calculation itself.
-        if self.max_peak_leverage_ratio != 5000.0 and self.max_leverage_p95_ratio == 5000.0:
+        if (
+            "max_peak_leverage_ratio" in self.model_fields_set
+            and "max_leverage_p95_ratio" not in self.model_fields_set
+        ):
             self.max_leverage_p95_ratio = self.max_peak_leverage_ratio
         return self
 
@@ -93,7 +96,7 @@ class AnalysisRequest(BaseModel):
     validation: AnalysisPeriod = Field(
         default_factory=lambda: AnalysisPeriod(start=date(2026, 7, 1), end=date(2026, 7, 16))
     )
-    platforms: List[str] = Field(default_factory=lambda: ["mt5", "hh_mt5"])
+    platforms: List[str] = Field(default_factory=lambda: ["mt4", "mt5", "hh_mt5"])
     filters: AnalysisFilters = Field(default_factory=AnalysisFilters)
     rules: AnalysisRules = Field(default_factory=AnalysisRules)
     personal_candidate_list: bool = False

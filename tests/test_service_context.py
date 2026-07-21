@@ -140,3 +140,29 @@ def test_bbook_leakage_contains_selection_pnl_for_month_over_month_comparison():
     assert row["may_client_net_pnl"] == 20.0
     assert row["june_client_net_pnl"] == 45.0
     assert row["validation_client_net_pnl"] == 80.0
+
+
+def test_bbook_leakage_exposes_readable_reason_tags():
+    summary = build_misjudge_summary([
+        {
+            "platform": "mt5",
+            "login": 8,
+            "account_group": "real",
+            "book": "bbook",
+            "selection": {"client_net_pnl": 120.0},
+            "validation": {"client_net_pnl": 180.0},
+            "monthly": [],
+            "selection_source": "martingale_blocked",
+            "abook_rules_pass": False,
+            "selection_flags": ["leverage_p95_ratio"],
+            "martingale_blocked": True,
+            "martingale_hard_block": True,
+            "martingale_risk_level": "high",
+        }
+    ])
+
+    tags = summary["bbook_profitable"][0]["bbook_reason_tags"]
+
+    assert any("确认马丁" in tag for tag in tags)
+    assert "Abook规则未通过" in tags
+    assert "杠杆 P95 超限" in tags

@@ -154,7 +154,32 @@ def test_account_detail_endpoint_forwards_requested_analysis_window():
     class FakeRepository:
         def fetch_account_detail(self, platform, login, start, end):
             calls.append((platform, login, start, end))
-            return []
+            return [
+                {
+                    "platform": platform,
+                    "login": login,
+                    "symbol": "XAUUSD",
+                    "entry_time": "2026-01-01 00:00:00.000",
+                    "exit_time": "2026-01-01 00:00:00.100",
+                    "entry_price": 100.0,
+                    "exit_price": 101.0,
+                    "direction": "Long",
+                    "volume": 1.0,
+                    "profit": 1.0,
+                },
+                {
+                    "platform": platform,
+                    "login": login,
+                    "symbol": "XAUUSD",
+                    "entry_time": "2026-01-01 00:00:00.200",
+                    "exit_time": "2026-01-01 00:00:00.300",
+                    "entry_price": 100.0,
+                    "exit_price": 99.0,
+                    "direction": "Long",
+                    "volume": 1.0,
+                    "profit": -1.0,
+                },
+            ]
 
     app.dependency_overrides[get_repository] = lambda: FakeRepository()
     try:
@@ -172,6 +197,7 @@ def test_account_detail_endpoint_forwards_requested_analysis_window():
 
     assert response.status_code == 200
     assert calls == [("mt5", 7, "2026-05-01", "2026-07-16")]
+    assert response.json()["markout"]["entry"]["curve"]
 
 
 def test_analysis_routes_population_accounts_even_when_risk_sql_excludes_some(monkeypatch):

@@ -24,6 +24,7 @@ export interface AccountRow {
   monthly?: Array<Record<string, any>>
   stability: { score: number; tier: string }
   selection_flags: string[]
+  bbook_reason_tags?: string[]
   confidence_tier?: string
   risk_balance_prev_month?: number | null
   risk_average_open_degree?: number | null
@@ -84,9 +85,15 @@ export interface AccountDetailPayload {
   concentration?: Record<string, number>
   de_extreme?: Record<string, number>
   markout?: Record<string, {
-    positive_5s_bps?: number | null
-    negative_5s_bps?: number | null
-    curve: Array<Record<string, number | null>>
+    primary_horizon_ms?: number
+    primary_bps?: number | null
+    mean_5s_bps?: number | null
+    sample_count?: number
+    curve: Array<{
+      offset_ms: number
+      mean_bps: number | null
+      sample_count?: number
+    }>
   }>
   martingale?: Record<string, any>
 }

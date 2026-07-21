@@ -6,6 +6,19 @@ from typing import Any
 
 ALLOWED_PLATFORMS = {"mt4", "mt5", "hh_mt5"}
 
+# MT4 users live in a separate legacy table without a platform column. Keep a
+# single normalized source so every dashboard query applies the same account
+# population boundary to MT4, MT5, and HH MT5.
+USER_SOURCE_SQL = """
+(
+    SELECT platform, toUInt64(login) AS login, `group`, is_deleted
+    FROM risk.ods_mt5_users FINAL
+    UNION ALL
+    SELECT 'mt4' AS platform, toUInt64(login) AS login, `group`, is_deleted
+    FROM risk.ods_mt4_users FINAL
+)
+"""
+
 
 def _date_end_exclusive(end: str) -> str:
     return (date.fromisoformat(end) + timedelta(days=1)).isoformat()
@@ -76,7 +89,7 @@ WITH users AS (
         platform,
         login,
         any(`group`) AS account_group
-    FROM risk.ods_mt5_users FINAL
+    FROM {USER_SOURCE_SQL} AS user_source
     WHERE {user_where}
     GROUP BY platform, login
 ), periods AS (
@@ -136,12 +149,12 @@ WITH users AS (
         toDate(time) AS trade_date,
         toStartOfMonth(time) AS month_start,
         countIf(action IN (0, 1)) AS trade_rows,
-        sumIf(profit, action IN (0, 1)) AS daily_deal_market_pnl,
-        sumIf(profit, action IN (0, 1) AND profit > 0) AS daily_gross_wins,
-        sumIf(profit, action IN (0, 1) AND profit < 0) AS daily_gross_losses,
-        sumIf(storage + commission + fee, action IN (0, 1)) AS daily_costs,
-        sumIf(profit + storage + commission + fee, action IN (0, 1)) AS daily_client_net_pnl,
-        sumIf(profit, action IN (2, 3)) AS daily_funding_pnl
+        toFloat64(sumIf(profit, action IN (0, 1))) AS daily_deal_market_pnl,
+        toFloat64(sumIf(profit, action IN (0, 1) AND profit > 0)) AS daily_gross_wins,
+        toFloat64(sumIf(profit, action IN (0, 1) AND profit < 0)) AS daily_gross_losses,
+        toFloat64(sumIf(storage + commission + fee, action IN (0, 1))) AS daily_costs,
+        toFloat64(sumIf(profit + storage + commission + fee, action IN (0, 1))) AS daily_client_net_pnl,
+        toFloat64(sumIf(profit, action IN (2, 3))) AS daily_funding_pnl
     FROM risk.ods_mt5_deals AS d FINAL
     INNER JOIN users AS u
         ON d.platform = u.platform AND d.login = u.login
@@ -153,6 +166,30 @@ WITH users AS (
       AND d.time >= period.period_start
       AND d.time < period.period_end
     GROUP BY d.platform, d.login, period.phase, trade_date, month_start
+    UNION ALL
+    SELECT
+        mt.platform AS platform,
+        mt.login AS login,
+        period.phase AS phase,
+        toDate(mt.exit_time) AS trade_date,
+        toStartOfMonth(mt.exit_time) AS month_start,
+        count() AS trade_rows,
+        sum(toFloat64(mt.profit)) AS daily_deal_market_pnl,
+        sumIf(toFloat64(mt.profit), mt.profit > 0) AS daily_gross_wins,
+        sumIf(toFloat64(mt.profit), mt.profit < 0) AS daily_gross_losses,
+        0.0 AS daily_costs,
+        sum(toFloat64(mt.profit)) AS daily_client_net_pnl,
+        0.0 AS daily_funding_pnl
+    FROM risk.dwd_matched_trades AS mt FINAL
+    INNER JOIN users AS u
+        ON mt.platform = u.platform AND mt.login = u.login
+    CROSS JOIN periods AS period
+    WHERE mt.platform = 'mt4'
+      AND mt.exit_time >= {{start:Date}}
+      AND mt.exit_time < {{end_exclusive:Date}}
+      AND mt.exit_time >= period.period_start
+      AND mt.exit_time < period.period_end
+    GROUP BY mt.platform, mt.login, period.phase, trade_date, month_start
 ), deal_costs AS (
     SELECT
         platform,
@@ -233,18 +270,33 @@ WITH users AS (
       AND mt.exit_time < {{end_exclusive:Date}}
 ), deal_source_coverage AS (
     SELECT
-        min(d.time) AS source_deal_raw_min,
-        max(d.time) AS source_deal_raw_max,
-        minIf(d.time, d.is_deleted = 0) AS source_deal_min,
-        maxIf(d.time, d.is_deleted = 0) AS source_deal_max,
-        countIf(d.is_deleted = 1) AS source_deal_deleted_rows
-    FROM risk.ods_mt5_deals AS d FINAL
-    INNER JOIN users AS u
-        ON d.platform = u.platform AND d.login = u.login
-    WHERE d.platform IN {{platforms:Array(String)}}
-      AND d.time >= {{start:Date}}
-      AND d.time < {{end_exclusive:Date}}
+        min(source_time) AS source_deal_raw_min,
+        max(source_time) AS source_deal_raw_max,
+        minIf(source_time, is_deleted = 0) AS source_deal_min,
+        maxIf(source_time, is_deleted = 0) AS source_deal_max,
+        sum(is_deleted) AS source_deal_deleted_rows
+    FROM (
+        SELECT
+            d.time AS source_time,
+            toUInt8(d.is_deleted) AS is_deleted
+        FROM risk.ods_mt5_deals AS d FINAL
+        INNER JOIN users AS u
+            ON d.platform = u.platform AND d.login = u.login
+        WHERE d.platform IN {{platforms:Array(String)}}
+          AND d.time >= {{start:Date}}
+          AND d.time < {{end_exclusive:Date}}
+        UNION ALL
+        SELECT
+            mt.exit_time AS source_time,
+            toUInt8(0) AS is_deleted
+        FROM risk.dwd_matched_trades AS mt FINAL
+        INNER JOIN users AS u
+            ON mt.platform = u.platform AND mt.login = u.login
+        WHERE mt.platform = 'mt4'
+          AND mt.exit_time >= {{start:Date}}
+          AND mt.exit_time < {{end_exclusive:Date}}
     )
+)
 SELECT
     k.platform AS platform,
     k.login AS login,
@@ -363,7 +415,7 @@ WITH users AS (
     SELECT
         platform,
         login
-    FROM risk.ods_mt5_users FINAL
+    FROM {USER_SOURCE_SQL} AS user_source
     WHERE {" AND ".join(user_conditions)}
     GROUP BY platform, login
 )
@@ -371,8 +423,8 @@ SELECT
     d.platform AS platform,
     d.login AS login,
     toDate(d.time) AS trade_date,
-    sumIf(profit + storage + commission + fee, action IN (0, 1)) AS client_net_pnl,
-    sumIf(profit, action IN (0, 1)) AS market_pnl,
+    toFloat64(sumIf(profit + storage + commission + fee, action IN (0, 1))) AS client_net_pnl,
+    toFloat64(sumIf(profit, action IN (0, 1))) AS market_pnl,
     countIf(action IN (0, 1)) AS matched_trades
 FROM risk.ods_mt5_deals AS d FINAL
 INNER JOIN users AS u
@@ -382,7 +434,22 @@ WHERE d.is_deleted = 0
   AND d.time >= {{start:Date}}
   AND d.time < {{end_exclusive:Date}}
 GROUP BY d.platform, d.login, trade_date
-ORDER BY d.platform, d.login, trade_date
+UNION ALL
+SELECT
+    mt.platform AS platform,
+    mt.login AS login,
+    toDate(mt.exit_time) AS trade_date,
+    sum(toFloat64(mt.profit)) AS client_net_pnl,
+    sum(toFloat64(mt.profit)) AS market_pnl,
+    count() AS matched_trades
+FROM risk.dwd_matched_trades AS mt FINAL
+INNER JOIN users AS u
+    ON mt.platform = u.platform AND mt.login = u.login
+WHERE mt.platform = 'mt4'
+  AND mt.exit_time >= {{start:Date}}
+  AND mt.exit_time < {{end_exclusive:Date}}
+GROUP BY mt.platform, mt.login, trade_date
+ORDER BY platform, login, trade_date
 """
     return query, params
 
@@ -391,21 +458,21 @@ def build_account_detail_query(platform: str, login: int, start: str, end: str) 
     """Return trade-level detail for one account."""
     if platform not in ALLOWED_PLATFORMS:
         raise ValueError("unsupported platform")
-    query = """
+    query = f"""
     SELECT
         platform, login, symbol, direction, entry_time, exit_time,
         entry_price, exit_price, volume, profit, holding_seconds,
         entry_deal_id, exit_deal_id
     FROM risk.dwd_matched_trades AS m FINAL
-    INNER JOIN risk.ods_mt5_users AS u FINAL
+    INNER JOIN {USER_SOURCE_SQL} AS u
       ON m.platform = u.platform AND m.login = u.login
     WHERE u.is_deleted = 0
       AND positionCaseInsensitive(u.`group`, 'test') = 0
       AND positionCaseInsensitive(u.`group`, 'demo') = 0
-      AND m.platform = {platform:String}
-      AND m.login = {login:UInt64}
-      AND m.exit_time >= {start:Date}
-      AND m.exit_time < {end_exclusive:Date}
+      AND m.platform = {{platform:String}}
+      AND m.login = {{login:UInt64}}
+      AND m.exit_time >= {{start:Date}}
+      AND m.exit_time < {{end_exclusive:Date}}
     ORDER BY exit_time DESC
     LIMIT 5000
     """
@@ -443,7 +510,7 @@ def build_book_symbol_query(
            sum(m.profit) AS market_pnl,
            avg(m.holding_seconds) AS avg_holding_seconds
     FROM risk.dwd_matched_trades AS m FINAL
-    INNER JOIN risk.ods_mt5_users AS u FINAL
+    INNER JOIN {USER_SOURCE_SQL} AS u
       ON m.platform = u.platform AND m.login = u.login
     WHERE u.is_deleted = 0
       AND positionCaseInsensitive(u.`group`, 'test') = 0

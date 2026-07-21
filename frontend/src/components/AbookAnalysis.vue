@@ -47,9 +47,14 @@ function phaseSummary(accounts: AccountRow[], phase: Phase) {
 }
 
 const abookAccounts = computed(() => (props.data.accounts || []).filter(account => account.book === 'abook'))
+const bbookAccounts = computed(() => (props.data.accounts || []).filter(account => account.book === 'bbook'))
 const summaries = computed(() => ({
   selection: phaseSummary(abookAccounts.value, 'selection'),
   validation: phaseSummary(abookAccounts.value, 'validation'),
+}))
+const bbookSummaries = computed(() => ({
+  selection: phaseSummary(bbookAccounts.value, 'selection'),
+  validation: phaseSummary(bbookAccounts.value, 'validation'),
 }))
 const leakage = computed(() => (props.data.misjudge?.bbook_profitable || []).filter((row: any) => amount(row.profit_amount) > 100))
 type AbookSortField = 'may' | 'june' | 'july' | 'selectionWinRate' | 'validationWinRate' | 'selectionTrades' | 'score'
@@ -96,6 +101,14 @@ const sortedLeakage = computed(() => [...leakage.value].sort((left: any, right: 
   const delta = amount(left[key]) - amount(right[key])
   return (leakageSortDirection.value === 'asc' ? 1 : -1) * (delta || (Number(left.login) - Number(right.login)))
 }))
+
+const accountLookup = computed(() => new Map(
+  (props.data.accounts || []).map(account => [`${account.platform}-${account.login}`, account]),
+))
+
+function leakageAccount(row: any): AccountRow {
+  return accountLookup.value.get(`${row.platform}-${row.login}`) || row as AccountRow
+}
 </script>
 
 <template>
@@ -108,10 +121,21 @@ const sortedLeakage = computed(() => [...leakage.value].sort((left: any, right: 
     <div class="phase-cards">
       <article v-for="phase in (['selection', 'validation'] as Phase[])" :key="phase" class="metric-card">
         <span class="kicker">{{ phase === 'selection' ? '筛选期（5–6 月）' : '验证期（7 月）' }}</span>
-        <div class="list-row"><span>总盈利</span><b class="positive">{{ format(summaries[phase].totalProfit) }}</b></div>
-        <div class="list-row"><span>总亏损</span><b class="negative">{{ format(summaries[phase].totalLoss) }}</b></div>
+        <div class="list-row"><span>盈利金额</span><b class="positive">{{ format(summaries[phase].totalProfit) }}</b></div>
+        <div class="list-row"><span>亏损金额</span><b class="negative">{{ format(-summaries[phase].totalLoss) }}</b></div>
         <div class="list-row"><span>净 P&amp;L</span><b :class="summaries[phase].netPnl >= 0 ? 'positive' : 'negative'">{{ format(summaries[phase].netPnl) }}</b></div>
-        <small>总盈利 - 总亏损 = 净 P&amp;L · {{ summaries[phase].activeAccounts }}/{{ summaries[phase].accounts }} 个活跃账户 · {{ summaries[phase].trades }} 笔交易</small>
+        <small>盈利金额 + 亏损金额 = 净 P&amp;L · {{ summaries[phase].activeAccounts }}/{{ summaries[phase].accounts }} 个活跃账户 · {{ summaries[phase].trades }} 笔交易</small>
+      </article>
+    </div>
+
+    <div class="panel-head"><div><span class="kicker">BBOOK ANALYSIS</span><h3>Bbook 分析</h3></div><span class="hint">客户 P&amp;L 口径；公司利润单独计算</span></div>
+    <div class="phase-cards">
+      <article v-for="phase in (['selection', 'validation'] as Phase[])" :key="phase" class="metric-card">
+        <span class="kicker">{{ phase === 'selection' ? '筛选期（5–6 月）' : '验证期（7 月）' }}</span>
+        <div class="list-row"><span>盈利金额</span><b class="positive">{{ format(bbookSummaries[phase].totalProfit) }}</b></div>
+        <div class="list-row"><span>亏损金额</span><b class="negative">{{ format(-bbookSummaries[phase].totalLoss) }}</b></div>
+        <div class="list-row"><span>净 P&amp;L</span><b :class="bbookSummaries[phase].netPnl >= 0 ? 'positive' : 'negative'">{{ format(bbookSummaries[phase].netPnl) }}</b></div>
+        <small>盈利金额 + 亏损金额 = 净 P&amp;L · {{ bbookSummaries[phase].activeAccounts }}/{{ bbookSummaries[phase].accounts }} 个活跃账户 · {{ bbookSummaries[phase].trades }} 笔交易</small>
       </article>
     </div>
 
@@ -143,7 +167,7 @@ const sortedLeakage = computed(() => [...leakage.value].sort((left: any, right: 
       <details open>
         <summary>显示公司损失大于 100 的 {{ leakage.length }} 人</summary>
         <div v-if="!leakage.length" class="empty">暂无金额大于 100 的漏网用户</div>
-        <div v-else class="table-scroll"><table><thead><tr><th>用户</th><th><button class="table-sort" @click="toggleLeakageSort('may')">5月 P&amp;L {{ leakageSortMark('may') }}</button></th><th><button class="table-sort" @click="toggleLeakageSort('june')">6月 P&amp;L {{ leakageSortMark('june') }}</button></th><th><button class="table-sort" @click="toggleLeakageSort('july')">7月 P&amp;L {{ leakageSortMark('july') }}</button></th></tr></thead><tbody><tr v-for="row in sortedLeakage" :key="`${row.platform}-${row.login}`"><td>{{ row.platform }} / {{ row.login }}<small>筛选期合计 {{ format(row.selection_client_net_pnl) }}</small></td><td :class="row.may_client_net_pnl >= 0 ? 'positive' : 'negative'">{{ format(row.may_client_net_pnl) }}</td><td :class="row.june_client_net_pnl >= 0 ? 'positive' : 'negative'">{{ format(row.june_client_net_pnl) }}</td><td class="positive">{{ format(row.validation_client_net_pnl) }}</td></tr></tbody></table></div>
+        <div v-else class="table-scroll"><table><thead><tr><th>用户</th><th>Bbook 原因</th><th><button class="table-sort" @click="toggleLeakageSort('may')">5月 P&amp;L {{ leakageSortMark('may') }}</button></th><th><button class="table-sort" @click="toggleLeakageSort('june')">6月 P&amp;L {{ leakageSortMark('june') }}</button></th><th><button class="table-sort" @click="toggleLeakageSort('july')">7月 P&amp;L {{ leakageSortMark('july') }}</button></th></tr></thead><tbody><tr v-for="row in sortedLeakage" :key="`${row.platform}-${row.login}`" @click="emit('open', leakageAccount(row))"><td>{{ row.platform }} / {{ row.login }}<small>筛选期合计 {{ format(row.selection_client_net_pnl) }}</small></td><td><span v-for="tag in (row.bbook_reason_tags || ['Bbook'])" :key="tag" class="tag danger">{{ tag }}</span></td><td :class="row.may_client_net_pnl >= 0 ? 'positive' : 'negative'">{{ format(row.may_client_net_pnl) }}</td><td :class="row.june_client_net_pnl >= 0 ? 'positive' : 'negative'">{{ format(row.june_client_net_pnl) }}</td><td class="positive">{{ format(row.validation_client_net_pnl) }}</td></tr></tbody></table></div>
       </details>
     </div>
 

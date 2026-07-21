@@ -24,7 +24,6 @@ from .service import (
     build_two_stage_payload,
     prepare_analysis_context,
 )
-from .account_detail import load_markout_rows
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -221,10 +220,7 @@ def account_detail(
 ) -> dict:
     try:
         rows = repository.fetch_account_detail(platform, login, start, end)
-        payload = build_account_detail_payload(
-            rows,
-            markout_rows=load_markout_rows(login, selection_start, end),
-        )
+        payload = build_account_detail_payload(rows)
         snapshot = load_martingale_snapshot(snapshot_path(), selection_start, selection_end, [platform])
         payload["martingale"] = {
             **snapshot.summary(),

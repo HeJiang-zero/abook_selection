@@ -32,15 +32,25 @@ def test_default_strategy_filters_match_july_tuned_profile_without_monthly_pnl_g
     assert request.rules.min_positive_month_rate == 0.5  # legacy field retained but ignored by routing
     assert request.rules.max_top1_day_profit_contribution == 0.3
     assert request.rules.max_daily_profit_month_contribution == 0.6
-    assert request.rules.max_leverage_p95_ratio == 5000.0
-    assert request.rules.max_peak_leverage_ratio == 5000.0
-    assert request.rules.max_high_leverage_holding_seconds == 300.0
+    assert request.rules.max_leverage_p95_ratio == 500.0
+    assert request.rules.max_peak_leverage_ratio == 500.0
+    assert request.rules.max_high_leverage_holding_seconds == 60.0
     assert request.rules.min_direction_day_rate_lower_bound == 0.55
     assert request.rules.min_stability_score == 70
     assert request.rules.min_win_rate == 0.5
     assert request.rules.min_selection_monthly_consistency == 0.0
     assert request.personal_candidate_list is False
     assert request.news_candidate_list is False
+
+
+def test_legacy_peak_leverage_field_still_overrides_new_default_when_sent_alone():
+    request = AnalysisRequest(rules={"max_peak_leverage_ratio": 125})
+
+    assert request.rules.max_leverage_p95_ratio == 125.0
+
+
+def test_default_platforms_include_mt4():
+    assert AnalysisRequest().platforms == ["mt4", "mt5", "hh_mt5"]
 
 
 def test_analysis_request_accepts_separate_selection_and_validation_rules():

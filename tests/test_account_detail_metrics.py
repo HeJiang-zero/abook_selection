@@ -89,19 +89,36 @@ def test_account_detail_metrics_calculate_concentration_and_de_extreme_results()
     assert result["de_extreme"]["without_max_position_order"] == 55.0
 
 
-def test_markout_summary_returns_positive_and_negative_entry_exit_curves():
+def test_markout_summary_builds_entry_exit_curves_from_matched_trade_tape():
     rows = [
-        {"platform": "mt5", "login": 7, "entry_mean_5000ms_bps": 2.0, "exit_mean_5000ms_bps": -3.0},
-        {"platform": "mt5", "login": 8, "entry_mean_5000ms_bps": -1.0, "exit_mean_5000ms_bps": 4.0},
-        {"platform": "mt5", "login": 9, "entry_mean_5000ms_bps": 3.0, "exit_mean_5000ms_bps": -2.0},
+        {
+            "entry_time": "2026-01-01 00:00:00.000",
+            "exit_time": "2026-01-01 00:00:00.100",
+            "entry_price": 100.0,
+            "exit_price": 101.0,
+            "direction": "Long",
+            "volume": 1.0,
+            "profit": 1.0,
+        },
+        {
+            "entry_time": "2026-01-01 00:00:00.200",
+            "exit_time": "2026-01-01 00:00:00.300",
+            "entry_price": 100.0,
+            "exit_price": 99.0,
+            "direction": "Long",
+            "volume": 1.0,
+            "profit": -1.0,
+        },
     ]
 
     result = summarize_markout_rows(rows)
 
-    assert result["entry"]["positive_5s_bps"] == 2.5
-    assert result["entry"]["negative_5s_bps"] == -1.0
-    assert result["exit"]["positive_5s_bps"] == 4.0
-    assert result["exit"]["negative_5s_bps"] == -2.5
+    entry_1s = next(point for point in result["entry"]["curve"] if point["offset_ms"] == 1000)
+    exit_100ms = next(point for point in result["exit"]["curve"] if point["offset_ms"] == 100)
+
+    assert entry_1s["mean_bps"] == -100.0
+    assert exit_100ms["mean_bps"] == 49.50495
+    assert result["entry"]["sample_count"] == 2
 
 
 def test_account_detail_omits_dimensions_without_observations():

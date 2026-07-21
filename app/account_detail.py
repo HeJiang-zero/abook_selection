@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import bisect
 from collections import defaultdict
-from datetime import date, datetime
-import csv
-import os
-from pathlib import Path
+from datetime import datetime
+import math
 from typing import Any, Iterable
 
 
@@ -116,71 +115,94 @@ def build_account_detail_metrics(rows: Iterable[dict[str, Any]]) -> dict[str, An
     return {"metrics": metrics, "concentration": concentration, "de_extreme": de_extreme}
 
 
+_MARKOUT_OFFSETS_MS = (-10000, -5000, -1000, -500, -100, -50, -10, 0, 10, 50, 100, 250, 500, 1000, 2000, 5000, 10000)
+
+
+def _timestamp_ms(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return int(parsed.timestamp() * 1000)
+
+
+def _direction_sign(row: dict[str, Any]) -> int:
+    action = row.get("action")
+    if action not in (None, ""):
+        return 1 if str(action).strip().lower() in {"0", "buy", "long"} else -1
+    return 1 if str(row.get("direction") or "").strip().lower() in {"buy", "long", "0"} else -1
+
+
+def _matched_trade_tape(rows: list[dict[str, Any]]) -> tuple[list[int], list[float]]:
+    prints: list[tuple[int, int, float]] = []
+    for index, row in enumerate(rows):
+        entry_time = _timestamp_ms(row.get("entry_time"))
+        exit_time = _timestamp_ms(row.get("exit_time"))
+        entry_price = _number(row.get("entry_price"))
+        exit_price = _number(row.get("exit_price"))
+        if entry_time is not None and entry_price > 0:
+            prints.append((entry_time, index, entry_price))
+        if exit_time is not None and exit_price > 0:
+            prints.append((exit_time, index, exit_price))
+    prints.sort(key=lambda item: item[0])
+    return [item[0] for item in prints], [item[2] for item in prints]
+
+
+def _price_at_or_before(times: list[int], prices: list[float], target_ms: int) -> float | None:
+    index = bisect.bisect_right(times, target_ms) - 1
+    return prices[index] if index >= 0 else None
+
+
+def _markout_value(row: dict[str, Any], kind: str, reference_price: float | None) -> float | None:
+    if reference_price is None:
+        return None
+    price = _number(row.get("entry_price" if kind == "entry" else "exit_price"))
+    if price <= 0:
+        return None
+    direction = _direction_sign(row) * (1 if kind == "entry" else -1)
+    value = direction * (reference_price - price) / price * 10000
+    return value if math.isfinite(value) else None
+
+
 def summarize_markout_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Calculate a simple matched-trade markout curve without tick data."""
     result: dict[str, Any] = {}
-    materialized = list(rows)
+    materialized = [row for row in rows if row.get("entry_time") or row.get("exit_time")]
+    times, prices = _matched_trade_tape(materialized)
+    if not materialized or not times:
+        return result
     for kind in ("entry", "exit"):
-        fields = sorted({
-            key for row in materialized for key in row
-            if key.startswith(f"{kind}_mean_") and key.endswith("ms_bps")
-        })
-        if not fields:
-            continue
         curve = []
-        for field in fields:
-            offset_text = field.removeprefix(f"{kind}_mean_").removesuffix("ms_bps")
-            values = [(_number(row.get(field)), max(_number(row.get(f"{kind}_events")), 1.0)) for row in materialized if row.get(field) not in (None, "")]
-            positive = [(value, weight) for value, weight in values if value > 0]
-            negative = [(value, weight) for value, weight in values if value < 0]
-            positive_mean = sum(value * weight for value, weight in positive) / sum(weight for _, weight in positive) if positive else None
-            negative_mean = sum(value * weight for value, weight in negative) / sum(weight for _, weight in negative) if negative else None
+        for offset_ms in _MARKOUT_OFFSETS_MS:
+            values: list[float] = []
+            for row in materialized:
+                event_time = _timestamp_ms(row.get("entry_time" if kind == "entry" else "exit_time"))
+                if event_time is None:
+                    continue
+                reference = _price_at_or_before(times, prices, event_time + offset_ms)
+                value = _markout_value(row, kind, reference)
+                if value is None:
+                    continue
+                values.append(value)
+            mean_bps = sum(values) / len(values) if values else None
             curve.append({
-                "offset_ms": int(offset_text),
-                "positive_bps": round(positive_mean, 6) if positive_mean is not None else None,
-                "negative_bps": round(negative_mean, 6) if negative_mean is not None else None,
+                "offset_ms": offset_ms,
+                "mean_bps": round(mean_bps, 6) if mean_bps is not None else None,
                 "sample_count": len(values),
             })
-        five_second = next((row for row in curve if row["offset_ms"] == 5000), None)
-        values = [(_number(row.get(f"{kind}_mean_5000ms_bps")), max(_number(row.get(f"{kind}_events")), 1.0)) for row in materialized if row.get(f"{kind}_mean_5000ms_bps") not in (None, "")]
-        positive = [(value, weight) for value, weight in values if value > 0]
-        negative = [(value, weight) for value, weight in values if value < 0]
-        positive_mean = sum(value * weight for value, weight in positive) / sum(weight for _, weight in positive) if positive else None
-        negative_mean = sum(value * weight for value, weight in negative) / sum(weight for _, weight in negative) if negative else None
+
+        primary = next((point for point in curve if point["offset_ms"] == 1000), None)
+        five_second = next((point for point in curve if point["offset_ms"] == 5000), None)
+        sample_count = primary["sample_count"] if primary else max(point["sample_count"] for point in curve)
         result[kind] = {
-            "positive_5s_bps": five_second["positive_bps"] if five_second else (round(positive_mean, 6) if positive_mean is not None else None),
-            "negative_5s_bps": five_second["negative_bps"] if five_second else (round(negative_mean, 6) if negative_mean is not None else None),
+            "primary_horizon_ms": 1000,
+            "primary_bps": primary["mean_bps"] if primary else None,
+            "mean_5s_bps": five_second["mean_bps"] if five_second else None,
             "curve": curve,
-            "sample_count": len(values),
+            "sample_count": sample_count,
         }
     return result
-
-
-def _month_keys(start: str, end: str) -> list[str]:
-    current = date.fromisoformat(start).replace(day=1)
-    last = date.fromisoformat(end).replace(day=1)
-    result = []
-    while current <= last:
-        result.append(current.strftime("%Y-%m"))
-        current = current.replace(year=current.year + (current.month == 12), month=1 if current.month == 12 else current.month + 1)
-    return result
-
-
-def load_markout_rows(login: int, start: str, end: str) -> list[dict[str, Any]]:
-    root = Path(os.getenv("ABOOK_MARKOUT_DATA_ROOT", "/Users/jianghe/gzkj_副本_notickdata/markout_yearly"))
-    rows: dict[str, dict[str, Any]] = {}
-    for month in _month_keys(start, end):
-        for kind in ("entry", "exit"):
-            path = root / month / f"{kind}_user_markout_stats.csv"
-            if not path.exists():
-                continue
-            with path.open(newline="", encoding="utf-8") as handle:
-                for raw in csv.DictReader(handle):
-                    if int(float(raw.get("login") or 0)) != int(login):
-                        continue
-                    row = rows.setdefault(month, {})
-                    for key, value in raw.items():
-                        if key.startswith("mean_") and key.endswith("ms_bps"):
-                            row[f"{kind}_{key}"] = value
-                    if raw.get("events") not in (None, ""):
-                        row[f"{kind}_events"] = raw["events"]
-    return list(rows.values())

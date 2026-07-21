@@ -364,7 +364,7 @@ def build_analysis_payload(
     }
 
 
-def build_account_detail_payload(rows: Iterable[dict[str, Any]], markout_rows: Iterable[dict[str, Any]] | None = None) -> dict[str, Any]:
+def build_account_detail_payload(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     materialized = list(rows)
     symbols: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in materialized:
@@ -384,7 +384,7 @@ def build_account_detail_payload(rows: Iterable[dict[str, Any]], markout_rows: I
     return {
         "symbols": symbol_rows,
         **build_account_detail_metrics(materialized),
-        "markout": summarize_markout_rows(markout_rows or []),
+        "markout": summarize_markout_rows(materialized),
     }
 
 
@@ -887,6 +887,52 @@ def _daily_group_drawdown(
     return calculate_drawdown(_cumulative_series(by_day[day] for day in sorted(by_day)))
 
 
+_BOOK_REASON_LABELS = {
+    "insufficient_months": "样本月份不足",
+    "monthly_inconsistency": "月度表现不一致",
+    "daily_confidence": "日度稳定性不足",
+    "win_rate": "胜率未达标",
+    "payoff_ratio": "盈亏比未达标",
+    "monthly_consistency": "月度一致性未达标",
+    "profit_concentration": "盈利集中度过高",
+    "loss_concentration": "亏损集中度异常",
+    "daily_profit_month_concentration": "盈利月份集中度过高",
+    "leverage_p95_ratio": "杠杆 P95 超限",
+    "insufficient_sample": "交易样本不足",
+    "drawdown_efficiency": "收益/回撤效率不足",
+}
+
+
+def _bbook_reason_tags(account: dict[str, Any]) -> list[str]:
+    """Return readable, deterministic reasons for a Bbook routing decision."""
+    tags: list[str] = []
+    source = str(account.get("selection_source") or "")
+    detection_status = str(account.get("martingale_detection_status") or "none")
+    risk_level = str(account.get("martingale_risk_level") or "").strip()
+    snapshot_status = str(account.get("martingale_status") or "")
+
+    if source == "martingale_snapshot_unavailable" or snapshot_status in {"missing", "invalid", "stale"}:
+        tags.append("马丁快照不可用，安全阻断")
+    elif account.get("martingale_hard_block") or (
+        account.get("martingale_blocked") and detection_status == "confirmed"
+    ):
+        tags.append(f"确认马丁{f' · {risk_level}' if risk_level else ''}")
+    elif account.get("martingale_blocked"):
+        tags.append(f"马丁阻断{f' · {risk_level}' if risk_level else ''}")
+
+    if account.get("abook_rules_pass") is False or source == "abook_rules_failed":
+        tags.append("Abook规则未通过")
+
+    for flag in account.get("selection_flags", []) or []:
+        label = _BOOK_REASON_LABELS.get(str(flag))
+        if label and label not in tags:
+            tags.append(label)
+
+    if not tags:
+        tags.append("Bbook（未通过 Abook 路由）")
+    return tags
+
+
 def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     abook_losses = []
     bbook_profitable = []
@@ -919,6 +965,7 @@ def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
             "selection_source": account.get("selection_source", ""),
             "selection_flags": list(account.get("selection_flags", [])),
             "martingale_risk_level": account.get("martingale_risk_level"),
+            "bbook_reason_tags": list(account.get("bbook_reason_tags") or _bbook_reason_tags(account)),
         }
         if account.get("book") == "abook" and validation_pnl < 0:
             abook_losses.append({
@@ -1181,9 +1228,9 @@ def build_two_stage_payload(
     min_positive_month_rate: float = 0.5,
     max_top1_day_profit_contribution: float = 0.3,
     max_daily_profit_month_contribution: float = 1.0,
-    max_leverage_p95_ratio: float = 5000.0,
+    max_leverage_p95_ratio: float = 500.0,
     max_peak_leverage_ratio: float | None = None,
-    max_high_leverage_holding_seconds: float = 300.0,
+    max_high_leverage_holding_seconds: float = 60.0,
     risk_snapshot_status: str = "not_loaded",
     min_direction_day_rate_lower_bound: float = 0.55,
     min_stability_score: float = 70.0,
@@ -1201,7 +1248,7 @@ def build_two_stage_payload(
     r4_min_passing_weeks: int = 1,
 ) -> dict[str, Any]:
     """Build final Abook/Bbook routing and an independent validation-period readout."""
-    if max_peak_leverage_ratio is not None and max_leverage_p95_ratio == 5000.0:
+    if max_peak_leverage_ratio is not None and max_leverage_p95_ratio == 500.0:
         max_leverage_p95_ratio = max_peak_leverage_ratio
     materialized = list(rows)
     # This is a hard safety boundary. The query already applies the same
@@ -1442,6 +1489,7 @@ def build_two_stage_payload(
             "max_daily_profit_month_contribution": selection["max_daily_profit_month_contribution"],
             "has_nonzero_pnl": has_nonzero_pnl,
         }
+        account["bbook_reason_tags"] = _bbook_reason_tags(account) if book == "bbook" else []
         accounts.append(account)
 
     accounts.sort(key=lambda account: (account["selection_client_net_pnl"], account["platform"], account["login"]), reverse=True)
