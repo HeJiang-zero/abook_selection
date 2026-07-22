@@ -454,6 +454,131 @@ ORDER BY platform, login, trade_date
     return query, params
 
 
+def build_direction_matched_facts_query(
+    *,
+    platforms: list[str],
+    start: str,
+    end: str,
+    filters: dict[str, Any] | None = None,
+    excluded_logins: set[tuple[str, int]] | None = None,
+    selection_start: str | None = None,
+    selection_end: str | None = None,
+    validation_start: str | None = None,
+    validation_end: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Build monthly, daily, and symbol facts from matched trades by direction.
+
+    Direction analytics intentionally has no Deals join: every P&L field in
+    this query is the direction-specific ``matched.profit`` equivalent.
+    """
+    clean_platforms = [platform for platform in platforms if platform in ALLOWED_PLATFORMS]
+    if not clean_platforms:
+        clean_platforms = sorted(ALLOWED_PLATFORMS)
+
+    filters = filters or {}
+    params: dict[str, Any] = {
+        "platforms": clean_platforms,
+        "start": start,
+        "end_exclusive": _date_end_exclusive(end),
+    }
+    user_conditions = ["is_deleted = 0", "has({platforms:Array(String)}, platform)"]
+    user_conditions.extend([
+        "positionCaseInsensitive(`group`, 'test') = 0",
+        "positionCaseInsensitive(`group`, 'demo') = 0",
+    ])
+    values = filters.get("groups") or []
+    if values:
+        params["group_0"] = values
+        user_conditions.append("has({group_0:Array(String)}, `group`)")
+    if filters.get("logins"):
+        login_values = sorted({int(login) for login in filters["logins"]})
+        if len(login_values) <= 2000:
+            params["login_0"] = login_values
+            user_conditions.append("has({login_0:Array(UInt64)}, login)")
+        else:
+            user_conditions.append(f"login IN ({','.join(str(login) for login in login_values)})")
+    if excluded_logins:
+        by_platform: dict[str, list[int]] = {}
+        for platform, login in sorted(excluded_logins):
+            by_platform.setdefault(str(platform), []).append(int(login))
+        predicates = [
+            f"(platform = '{platform}' AND login IN ({','.join(str(login) for login in sorted(logins))}))"
+            for platform, logins in sorted(by_platform.items())
+        ]
+        user_conditions.append("NOT (" + " OR ".join(predicates) + ")")
+
+    user_where = " AND ".join(user_conditions)
+    needs_user_join = bool(values or filters.get("logins") or excluded_logins)
+    user_cte = (
+        f"users AS (\n    SELECT platform, login, any(`group`) AS account_group\n"
+        f"    FROM {USER_SOURCE_SQL} AS user_source\n"
+        f"    WHERE {user_where}\n    GROUP BY platform, login\n), "
+        if needs_user_join else ""
+    )
+    account_group_expr = "u.account_group" if needs_user_join else "''"
+    group_prefix = "mt.platform, mt.login, u.account_group, " if needs_user_join else "mt.platform, mt.login, "
+    user_join = "INNER JOIN users AS u ON mt.platform = u.platform AND mt.login = u.login" if needs_user_join else ""
+    query = f"""
+WITH {user_cte}periods AS (
+    SELECT 'selection' AS phase, toDate({{selection_start:Date}}) AS period_start,
+           toDate({{selection_end_exclusive:Date}}) AS period_end
+    UNION ALL
+    SELECT 'validation' AS phase, toDate({{validation_start:Date}}) AS period_start,
+           toDate({{validation_end_exclusive:Date}}) AS period_end
+)
+SELECT mt.platform AS platform,
+       mt.login AS login,
+       {account_group_expr} AS account_group,
+       period.phase AS phase,
+       mt.direction AS direction,
+       if(grouping(toStartOfMonth(mt.exit_time)) = 1,
+          toStartOfMonth(min(mt.exit_time)),
+          toStartOfMonth(mt.exit_time)) AS month_start,
+       if(grouping(toDate(mt.exit_time)) = 1,
+          toDate('1970-01-01'),
+          toDate(mt.exit_time)) AS trade_date,
+       if(grouping(mt.symbol) = 1, '', mt.symbol) AS symbol,
+       multiIf(
+           grouping(mt.symbol) = 0, 'symbol',
+           grouping(toDate(mt.exit_time)) = 0, 'day',
+           grouping(toStartOfMonth(mt.exit_time)) = 0, 'month',
+           'phase'
+       ) AS fact_level,
+       count() AS matched_trades,
+       countIf(mt.profit > 0) AS winning_trades,
+       countIf(mt.profit < 0) AS losing_trades,
+       sum(toFloat64(mt.profit)) AS side_pnl,
+       sum(toFloat64(mt.volume)) AS matched_volume,
+       sumIf(toFloat64(mt.profit), mt.profit > 0) AS gross_wins,
+       sumIf(toFloat64(mt.profit), mt.profit < 0) AS gross_losses,
+       avg(toFloat64(mt.holding_seconds)) AS avg_holding_seconds,
+       quantileTDigest(0.5)(toFloat64(mt.holding_seconds)) AS median_holding_seconds
+FROM risk.dwd_matched_trades AS mt FINAL
+{user_join}
+CROSS JOIN periods AS period
+WHERE mt.platform IN {{platforms:Array(String)}}
+  AND mt.direction IN ('Long', 'Short')
+  AND mt.exit_time >= {{start:Date}}
+  AND mt.exit_time < {{end_exclusive:Date}}
+  AND mt.exit_time >= period.period_start
+  AND mt.exit_time < period.period_end
+GROUP BY GROUPING SETS (
+    ({group_prefix}period.phase, mt.direction, toStartOfMonth(mt.exit_time)),
+    ({group_prefix}period.phase, mt.direction, toStartOfMonth(mt.exit_time), toDate(mt.exit_time)),
+    ({group_prefix}period.phase, mt.direction, mt.symbol),
+    ({group_prefix}period.phase, mt.direction)
+)
+ORDER BY platform, login, direction, phase, fact_level, month_start, trade_date, symbol
+"""
+    params.update({
+        "selection_start": selection_start or start,
+        "selection_end_exclusive": _date_end_exclusive(selection_end or end),
+        "validation_start": validation_start or start,
+        "validation_end_exclusive": _date_end_exclusive(validation_end or end),
+    })
+    return query, params
+
+
 def build_account_detail_query(platform: str, login: int, start: str, end: str) -> tuple[str, dict[str, Any]]:
     """Return trade-level detail for one account."""
     if platform not in ALLOWED_PLATFORMS:

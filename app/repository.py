@@ -11,6 +11,7 @@ from .queries import (
     build_analysis_query,
     build_book_symbol_query,
     build_daily_pnl_query,
+    build_direction_matched_facts_query,
     USER_SOURCE_SQL,
 )
 
@@ -85,6 +86,21 @@ class ClickHouseRepository:
             end=end.isoformat(),
             filters=request.filters.model_dump(),
             excluded_logins=excluded_logins,
+        )
+        return self._rows(query, params)
+
+    def fetch_direction_matched_facts(self, request: AnalysisRequest) -> list[dict[str, Any]]:
+        start = min(request.selection.start, request.validation.start)
+        end = max(request.selection.end, request.validation.end)
+        query, params = build_direction_matched_facts_query(
+            platforms=request.platforms,
+            start=start.isoformat(),
+            end=end.isoformat(),
+            filters=request.filters.model_dump(),
+            selection_start=request.selection.start.isoformat(),
+            selection_end=request.selection.end.isoformat(),
+            validation_start=request.validation.start.isoformat(),
+            validation_end=request.validation.end.isoformat(),
         )
         return self._rows(query, params)
 

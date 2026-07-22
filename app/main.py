@@ -13,8 +13,9 @@ from .analysis_cache import AnalysisSession, analysis_session_cache, request_sig
 from .martingale import build_martingale_filter, load_martingale_snapshot, snapshot_path
 from .avg_profit import build_avg_profit_filter
 from .book_analytics import build_book_analytics
+from .direction_analytics import build_direction_analytics_payload
 from .exports import render_abook_csv
-from .models import AnalysisRequest, BookAnalyticsRequest, FilterOptions, SnapshotRefreshRequest
+from .models import AnalysisRequest, BookAnalyticsRequest, DirectionAnalyticsRequest, FilterOptions, SnapshotRefreshRequest
 from .personal_candidates import load_news_candidates, load_personal_candidates
 from .repository import ClickHouseRepository, RepositoryConfigurationError
 from .snapshot_refresh import refresh_snapshots
@@ -359,6 +360,38 @@ def book_analytics(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="ClickHouse book analytics query failed") from exc
+
+
+@app.post("/api/abook/direction-analytics")
+def direction_analytics(
+    request: DirectionAnalyticsRequest,
+    repository: ClickHouseRepository = Depends(get_repository),
+) -> dict:
+    try:
+        cached_session = analysis_session_cache.get(
+            request.analysis_token,
+            request_signature(request.analysis),
+        )
+        if cached_session is None:
+            analysis_payload = analysis(request.analysis, repository)
+            cached_session = analysis_session_cache.get(
+                analysis_payload.get("analysis_token"),
+                request_signature(request.analysis),
+            )
+            if cached_session is not None:
+                analysis_payload = cached_session.payload
+        else:
+            analysis_payload = cached_session.payload
+        rows = repository.fetch_direction_matched_facts(request.analysis)
+        return build_direction_analytics_payload(
+            rows,
+            analysis_payload.get("population_accounts") or analysis_payload.get("accounts", []),
+            request.analysis,
+        )
+    except RepositoryConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="ClickHouse direction analytics query failed") from exc
 
 
 def _export_response(request: AnalysisRequest, repository: ClickHouseRepository) -> StreamingResponse:

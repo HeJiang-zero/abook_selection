@@ -149,3 +149,10 @@ class BookAnalyticsRequest(BaseModel):
     abook_accounts: List[AccountKey] = Field(default_factory=list)
     analysis_token: Optional[str] = None
     include_symbols: bool = True
+
+
+class DirectionAnalyticsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    analysis: AnalysisRequest
+    analysis_token: Optional[str] = None

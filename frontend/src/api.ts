@@ -1,4 +1,4 @@
-import type { AccountDetailPayload, AccountRow, AnalysisPayload, BookAnalyticsPayload, RequestModel, SnapshotRefreshResponse } from './types'
+import type { AccountDetailPayload, AccountRow, AnalysisPayload, BookAnalyticsPayload, DirectionAnalyticsPayload, RequestModel, SnapshotRefreshResponse } from './types'
 
 async function readJsonResponse<T>(response: Response, path: string): Promise<T> {
   const text = await response.text()
@@ -34,6 +34,10 @@ export function refreshSnapshots(request: RequestModel) {
 
 export function fetchBookAnalytics(request: RequestModel, accounts: Array<{ platform: string; login: number }>, analysisToken?: string, includeSymbols = true) {
   return postJson<BookAnalyticsPayload>('/api/abook/book-analytics', { analysis: request, abook_accounts: accounts, analysis_token: analysisToken, include_symbols: includeSymbols })
+}
+
+export function fetchDirectionAnalytics(request: RequestModel, analysisToken?: string) {
+  return postJson<DirectionAnalyticsPayload>('/api/abook/direction-analytics', { analysis: request, analysis_token: analysisToken })
 }
 
 export async function fetchAccountDetail(account: AccountRow, request: RequestModel): Promise<AccountDetailPayload> {

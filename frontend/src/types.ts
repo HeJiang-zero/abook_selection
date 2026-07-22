@@ -1,4 +1,4 @@
-export type Tab = 'overview' | 'users' | 'risk' | 'routing'
+export type Tab = 'overview' | 'users' | 'risk-routing' | 'direction'
 
 export interface RequestModel {
   selection: { start: string; end: string }
@@ -57,6 +57,19 @@ export interface BookAnalyticsPayload {
   risk_exposure?: Record<string, any>
   routing_quality?: Record<string, any>
   [key: string]: any
+}
+
+export interface DirectionAnalyticsPayload {
+  pnl_basis?: string
+  selection?: { start: string; end: string }
+  validation?: { start: string; end: string }
+  counts?: Record<string, number>
+  book_counts?: Record<'abook' | 'bbook', Record<string, number>>
+  accounts?: Array<Record<string, any>>
+  sets?: Record<string, Record<'long' | 'short', Record<string, any>>>
+  book_sets?: Record<string, Record<'abook' | 'bbook', Record<'long' | 'short', Record<string, any>>>>
+  comparison?: Record<string, number>
+  rules?: Record<string, any>
 }
 
 export interface SnapshotRefreshResponse {

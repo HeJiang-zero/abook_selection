@@ -34,12 +34,14 @@ def test_built_frontend_does_not_send_removed_rule_fields():
 
 def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
     app = _source("App.vue")
+    books = _source("components/BookPerformance.vue")
     sidebar = (FRONTEND / "src" / "components" / "FilterSidebar.vue").read_text()
     assert "总览" in app
     assert "盈亏结构" not in app
     assert "用户结构" in app
-    assert "风险敞口" in app
-    assert "分流质量" in app
+    assert "风险与分流" in app
+    assert "风险敞口" in books
+    assert "分流质量" in books
     assert "参数寻优" not in app
     assert "个人候选名单" in sidebar
     assert "马丁" in sidebar
@@ -137,6 +139,28 @@ def test_user_structure_has_independent_cumulative_and_daily_pnl_charts():
     assert "daily_series" in books
 
 
+def test_user_structure_keeps_long_pnl_axis_labels_and_dates_symbol_charts():
+    app = _source("App.vue")
+    books = _source("components/BookPerformance.vue")
+    assert "containLabel: true" in books
+    assert "left: 96" in books
+    assert ":request=" in app
+    assert "symbolTimeRange" in books
+    assert "筛选期" in books
+    assert "验证期" in books
+
+
+def test_frontend_combines_risk_and_routing_into_one_book_tab():
+    app = _source("App.vue")
+    books = _source("components/BookPerformance.vue")
+    assert "id: 'risk-routing'" in app
+    assert "label: '风险与分流'" in app
+    assert "routingChart" in books
+    assert "activeTab === 'risk-routing'" in books
+    assert "风险敞口" in books
+    assert "分流质量" in books
+
+
 def test_frontend_has_martingale_drawer_and_responsive_sidebar_contract():
     drawer = (FRONTEND / "src" / "components" / "AccountDrawer.vue").read_text()
     css = (FRONTEND / "src" / "style.css").read_text()
@@ -228,12 +252,153 @@ def test_frontend_uses_complete_population_for_overview_precision_and_book_analy
     assert "P&amp;L &gt; 0 / Abook 总人数" in analysis
 
 
-def test_book_performance_renders_pnl_distribution_as_stacked_bars():
+def test_frontend_exposes_direction_analytics_as_the_fifth_lazy_tab():
+    app = _source("App.vue")
+    api = _source("api.ts")
+    types = _source("types.ts")
+    panel = (FRONTEND / "src/components/DirectionPanel.vue").read_text()
+
+    assert "direction" in types
+    assert "多空分向" in app
+    assert "DirectionPanel" in app
+    assert "loadDirection" in app
+    assert "/api/abook/direction-analytics" in api
+    assert "matched.profit" in panel
+    for label in ["both_pass", "long_only_pass", "short_only_pass", "insufficient_side", "总 Abook"]:
+        assert label in panel
+    for field in ["pnl_distribution", "cumulative_pnl"]:
+        assert field in panel
+    assert "personal_candidate" not in panel
+    assert "r4" not in panel.lower()
+
+
+def test_direction_panel_requires_explicit_run_button_dynamic_phase_table_and_sorting():
+    app = _source("App.vue")
+    panel = (FRONTEND / "src/components/DirectionPanel.vue").read_text()
+
+    assert "运行分向筛选" in panel
+    assert "emit('run')" in panel
+    assert "@run=\"runDirection\"" in app
+    assert "sortBy" in panel
+    assert "sortDirection" in panel
+    assert "toggleSort" in panel
+    assert "account.long?.[phase]" in panel
+    assert "account.short?.[phase]" in panel
+
+
+def test_direction_panel_splits_book_side_phase_and_keeps_only_material_pnl_accounts():
+    panel = _source("components/DirectionPanel.vue")
+    types = _source("types.ts")
+
+    assert "books" in panel
+    assert "Abook" in panel and "Bbook" in panel
+    assert "book_sets" in panel and "book_sets" in types
+    assert "Math.abs" in panel
+    assert "side_pnl" in panel
+    assert "Math.abs(number(metric.side_pnl)) > 10" in panel
+    assert "cumulativeChart" in panel
+    assert "echarts" in panel
+    for removed in ["style_breakdown", "holding_duration_bins", "trade_volume_bins"]:
+        assert removed not in panel
+    for metric in ["平均 P&amp;L", "中位数 P&amp;L", "最差单日", "Top 5 P&amp;L 集中度"]:
+        assert metric in panel
+
+
+def test_direction_panel_uses_two_pnl_bars_eight_row_pagination_and_search_action():
+    panel = _source("components/DirectionPanel.vue")
+
+    assert "pnlDistributionCharts" in panel
+    assert "Long" in panel and "Short" in panel
+    assert "type: 'bar'" in panel
+    assert "pageSize = 8" in panel
+    assert "pagedRows" in panel
+    assert "pageCount" in panel
+    assert "上一页" in panel and "下一页" in panel
+    assert "重新运行分向筛选" in panel
+    assert "emit('run')" in panel
+    assert "showSymbol: false" in panel
+    assert "smooth: true" in panel
+    assert "cumulative_pnl?.full" in panel
+
+
+def test_direction_panel_removes_route_selector_but_compares_abook_bbook_by_direction():
+    panel = _source("components/DirectionPanel.vue")
+
+    assert "activeBook" not in panel
+    assert "路由<select" not in panel
+    assert "books" in panel
+    assert "long_pass" in panel and "short_pass" in panel
+    assert "Abook" in panel and "Bbook" in panel
+    assert "cumulativeCharts" in panel
+    assert "series" in panel
+    assert "account.book" in panel
+
+
+def test_direction_panel_places_filters_directly_above_account_list():
+    panel = _source("components/DirectionPanel.vue")
+
+    toolbar_start = panel.index("direction-toolbar")
+    table_start = panel.index("direction-account-table")
+    assert panel.index("phase-cards") < toolbar_start < table_start
+    assert "phase-cards" not in panel[toolbar_start:table_start]
+
+
+def test_direction_panel_removes_symbol_heatmap_and_all_profit_counts_show_precision():
+    direction = _source("components/DirectionPanel.vue")
     books = _source("components/BookPerformance.vue")
-    assert "distributionCharts" in books
+
+    assert "symbolHeatmapChart" not in direction
+    assert "品种热力" not in direction
+    assert "precision(" in direction
+    assert "precision(" in books
+    assert "precision {{" in direction
+    assert "precision {{" in books
+    assert "<th>precision</th>" in books
+
+
+def test_direction_account_table_labels_all_three_direction_metrics():
+    panel = _source("components/DirectionPanel.vue")
+
+    assert panel.count('class="table-metric-label">PF</span>') == 2
+
+
+def test_direction_toolbar_removes_duplicate_search_button():
+    panel = _source("components/DirectionPanel.vue")
+    toolbar = panel.split('class="direction-toolbar"', 1)[1].split('</div>', 1)[0]
+
+    assert "搜索 / 重新计算" not in toolbar
+    assert "重新运行分向筛选" in panel
+
+
+def test_book_performance_renders_pnl_distribution_as_period_bars():
+    books = _source("components/BookPerformance.vue")
+    assert "distributionPanelCharts" in books
     assert "distribution_by_period" in books
-    assert "stack: 'pnl-distribution'" in books
+    assert "distribution-grid" in books
     assert "type: 'bar'" in books
+
+
+def test_book_performance_renders_separate_period_profit_distribution_bars_with_tooltips():
+    books = _source("components/BookPerformance.vue")
+    assert "distributionPeriods" in books
+    assert "distribution-grid" in books
+    assert "formatter: (params" in books
+    assert "account_rate" in books
+    assert "net_pnl" in books
+    assert "stack: 'pnl-distribution'" not in books
+
+
+def test_book_performance_renders_asset_market_pnl_bars_before_distribution_without_symbol_table():
+    books = _source("components/BookPerformance.vue")
+    assert "symbolPanelCharts" in books
+    assert "symbol_heatmap" in books
+    assert "−市场 P&amp;L" in books
+    assert "Math.abs" in books
+    assert ".slice(0, 20)" in books
+    assert "{{ bookLabel(book) }} 品种客户盈亏" in books
+    assert "品种客户盈亏热力图（辅助）" not in books
+    assert books.index("品种客户盈亏") < books.index("P&amp;L 用户分布（按月份/阶段）")
+    assert "<th>交易笔数</th>" not in books
 
 
 def test_book_performance_renders_company_profit_comparison_as_chart():
