@@ -26,21 +26,6 @@ class AnalysisPeriod(BaseModel):
         return self
 
 
-class SnapshotRefreshRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    selection: AnalysisPeriod
-    platforms: List[str]
-
-    @field_validator("platforms")
-    @classmethod
-    def validate_platforms(cls, value: List[str]) -> List[str]:
-        allowed = {"mt4", "mt5", "hh_mt5"}
-        if not value or set(value) - allowed:
-            raise ValueError("platforms must contain only mt4, mt5, or hh_mt5")
-        return sorted(set(value))
-
-
 class AnalysisRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

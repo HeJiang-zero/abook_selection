@@ -50,6 +50,10 @@ class AnalysisSessionCache:
             self._entries.move_to_end(token)
             return session
 
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
 
 class ResultCache:
     """Small in-process TTL/LRU cache for computed analytics payloads."""

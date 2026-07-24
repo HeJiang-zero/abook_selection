@@ -1,4 +1,4 @@
-import type { AccountDetailPayload, AccountRow, AnalysisPayload, BookAnalyticsPayload, DirectionAnalyticsPayload, RequestModel, SnapshotRefreshResponse } from './types'
+import type { AccountDetailPayload, AccountRow, AnalysisPayload, BookAnalyticsPayload, DirectionAnalyticsPayload, RequestModel, WarehouseStatus } from './types'
 
 async function readJsonResponse<T>(response: Response, path: string): Promise<T> {
   const text = await response.text()
@@ -25,10 +25,10 @@ export function fetchAnalysis(request: RequestModel) {
   return postJson<AnalysisPayload>('/api/abook/analysis', request)
 }
 
-export function refreshSnapshots(request: RequestModel) {
-  return postJson<SnapshotRefreshResponse>('/api/abook/refresh-snapshots', {
-    selection: request.selection,
-    platforms: request.platforms,
+export function fetchWarehouseStatus() {
+  return fetch('/api/warehouse/status').then(async response => {
+    if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`)
+    return readJsonResponse<WarehouseStatus>(response, '/api/warehouse/status')
   })
 }
 

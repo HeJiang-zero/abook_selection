@@ -1,4 +1,6 @@
 本地 Warehouse 与独立刷新 CLI
+实施状态：已完成代码实现，等待最终验收。
+
 Summary
 采用“独立 CLI 刷新、Dashboard 只读”的方案：
 .venv/bin/python scripts/refresh_local_data.py \
@@ -25,7 +27,7 @@ manifest/generation 管理；
 新增统一的 Local/Remote QueryExecutor，所有分析查询、账户详情、方向分析、Book 分析、filters 和快照 builder 共用。
 Deals 保留 action 0,1,2,3 和必要的 is_deleted 信息，避免丢失资金流水及覆盖审计口径。
 dwd_matched_trades 的分区同时支持 exit_time、entry_time 和未平仓记录，避免风险 exposure 缺数据。
-所有时间统一为 UTC；落盘 schema 固定，不再依赖 builder 动态猜列。
+同步 SQL 将 login、platform 和核心时间/数值字段规范化后再落盘；本地查询不再依赖远程 FINAL。
 snapshot 保存对应的 warehouse_generation；generation 不一致时标记为 stale，不参与风险过滤。
 同步或快照完成后清理 analysis、direction 等内存缓存。
 Dashboard 新增只读的 Warehouse 状态展示：数据源、最后同步时间、generation、覆盖范围、快照是否 stale。
@@ -71,4 +73,4 @@ Assumptions
 历史修复必须显式使用 --reconcile-month。
 四个日期参数始终显式传入，避免误刷新错误时间范围。
 ABOOK_DATA_SOURCE=local 在完成远程对照验收后启用；remote 仅保留作排障和对照。
-当前仍处于 Plan Mode，本轮尚未修改仓库；执行阶段会创建 data/README.md 并实现上述脚本和代码改动。
+验收记录：后端 `229 passed, 1 warning`；前端 Vite production build 通过；CLI `--dry-run` 可在无远程连接时输出目标范围和待刷新月份。实际首次同步耗时取决于 ClickHouse 网络和数据量，运行后 CLI 会输出各表行数与状态。

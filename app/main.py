@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import time
 from typing import Optional
 
@@ -11,15 +12,17 @@ from fastapi.staticfiles import StaticFiles
 
 from .analysis_cache import AnalysisSession, analysis_session_cache, direction_analytics_cache, request_signature
 from .martingale import build_martingale_filter, load_martingale_snapshot, snapshot_path
-from .avg_profit import build_avg_profit_filter
+from .avg_profit import build_avg_profit_filter, snapshot_path as avg_profit_snapshot_path
 from .book_analytics import build_book_analytics
 from .direction_analytics import build_direction_analytics_payload
 from .exports import render_abook_csv
-from .models import AnalysisRequest, BookAnalyticsRequest, DirectionAnalyticsRequest, FilterOptions, SnapshotRefreshRequest
+from .models import AnalysisRequest, BookAnalyticsRequest, DirectionAnalyticsRequest, FilterOptions
 from .personal_candidates import load_news_candidates, load_personal_candidates
-from .repository import ClickHouseRepository, RepositoryConfigurationError
-from .snapshot_refresh import refresh_snapshots
+from .config import get_settings
+from .repository import ClickHouseRepository, LocalWarehouseRepository, RepositoryConfigurationError
 from .risk import build_local_risk_filter
+from .risk import snapshot_path as risk_snapshot_path
+from .warehouse import WarehouseCoverageError, load_manifest
 from .service import (
     build_account_detail_payload,
     build_analysis_payload,
@@ -44,9 +47,25 @@ app.add_middleware(
 
 def get_repository() -> ClickHouseRepository:
     try:
-        return ClickHouseRepository()
+        settings = get_settings()
+        if settings.data_source == "local":
+            return LocalWarehouseRepository(settings)
+        return ClickHouseRepository(settings)
+    except WarehouseCoverageError as exc:
+        raise _coverage_http_exception(exc) from exc
     except RepositoryConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _coverage_http_exception(exc: WarehouseCoverageError) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "warehouse_coverage_missing",
+            "message": "本地数据未覆盖当前分析范围，请先运行 scripts/refresh_local_data.py",
+            "missing": exc.missing,
+        },
+    )
 
 
 def _fetch_daily_rows(
@@ -115,25 +134,53 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "abook-dashboard"}
 
 
-@app.post("/api/abook/refresh-snapshots")
-def refresh_snapshot_files(request: SnapshotRefreshRequest) -> dict:
-    result = refresh_snapshots(
-        request.selection.start.isoformat(),
-        request.selection.end.isoformat(),
-        request.platforms,
-    )
-    if result.get("status") != "ready":
-        raise HTTPException(
-            status_code=502,
-            detail=str(result.get("error", "snapshot refresh failed")),
-        )
-    return result
+@app.get("/api/warehouse/status")
+def warehouse_status() -> dict:
+    settings = get_settings()
+    if settings.data_source == "remote":
+        return {"source": "remote", "status": "remote"}
+    manifest = load_manifest(settings.warehouse_path / "manifest.json")
+    generation = manifest.get("generation")
+    snapshots = {}
+    for name, path in {
+        "risk": risk_snapshot_path(),
+        "avg_profit": avg_profit_snapshot_path(),
+        "martingale": snapshot_path(),
+    }.items():
+        if not path.exists():
+            snapshots[name] = {"status": "missing", "path": str(path)}
+            continue
+        try:
+            payload = json.loads(path.read_text())
+            snapshot_generation = payload.get("warehouse_generation")
+            status = "stale" if generation and snapshot_generation != generation else "ready"
+            snapshots[name] = {
+                "status": status,
+                "path": str(path),
+                "warehouse_generation": snapshot_generation,
+            }
+        except (OSError, ValueError):
+            snapshots[name] = {"status": "invalid", "path": str(path)}
+    return {
+        "source": "local",
+        "status": "ready" if generation else "missing",
+        "warehouse_path": str(settings.warehouse_path),
+        "generation": generation,
+        "updated_at": manifest.get("updated_at"),
+        "data_start": manifest.get("data_start"),
+        "data_end": manifest.get("data_end"),
+        "platforms": manifest.get("platforms", []),
+        "tables": manifest.get("tables", {}),
+        "snapshots": snapshots,
+    }
 
 
 @app.get("/api/abook/filters", response_model=FilterOptions)
 def filter_options(repository: ClickHouseRepository = Depends(get_repository)) -> dict[str, list[str]]:
     try:
         return repository.fetch_filter_options()
+    except WarehouseCoverageError as exc:
+        raise _coverage_http_exception(exc) from exc
     except RepositoryConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -250,6 +297,8 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             daily_rows=daily_rows,
             overview_daily_rows=overview_daily_rows,
         )
+    except WarehouseCoverageError as exc:
+        raise _coverage_http_exception(exc) from exc
     except RepositoryConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -291,6 +340,8 @@ def account_detail(
         return payload
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except WarehouseCoverageError as exc:
+        raise _coverage_http_exception(exc) from exc
     except RepositoryConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -363,6 +414,8 @@ def book_analytics(
             "bbook": sum(1 for account in accounts if (str(account["platform"]), int(account["login"])) not in abook_keys),
         }
         return result
+    except WarehouseCoverageError as exc:
+        raise _coverage_http_exception(exc) from exc
     except RepositoryConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -401,6 +454,8 @@ def direction_analytics(
         )
         direction_analytics_cache.put(signature, result)
         return result
+    except WarehouseCoverageError as exc:
+        raise _coverage_http_exception(exc) from exc
     except RepositoryConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

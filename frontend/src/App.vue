@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { exportAbook, fetchAccountDetail, fetchAnalysis, fetchBookAnalytics, fetchDirectionAnalytics, refreshSnapshots } from './api'
-import type { AccountDetailPayload, AccountRow, AnalysisPayload, DirectionAnalyticsPayload, RequestModel, Tab } from './types'
+import { exportAbook, fetchAccountDetail, fetchAnalysis, fetchBookAnalytics, fetchDirectionAnalytics, fetchWarehouseStatus } from './api'
+import type { AccountDetailPayload, AccountRow, AnalysisPayload, DirectionAnalyticsPayload, RequestModel, Tab, WarehouseStatus } from './types'
 import FilterSidebar from './components/FilterSidebar.vue'
 import KpiCards from './components/KpiCards.vue'
 import SelectionFunnel from './components/SelectionFunnel.vue'
@@ -30,8 +30,7 @@ const activeTab = ref<Tab>('overview')
 const loading = ref(false)
 const bookLoading = ref(false)
 const bookSymbolsLoaded = ref(false)
-const refreshing = ref(false)
-const refreshMessage = ref('')
+const warehouseStatus = ref<WarehouseStatus | null>(null)
 const error = ref('')
 const rulesDirty = ref(false)
 const bookData = ref<any | null>(null)
@@ -82,21 +81,6 @@ function closeAccount() {
   selectedDirectionAccount.value = null
   accountDetail.value = null
   detailError.value = ''
-}
-async function refreshAllSnapshots() {
-  refreshing.value = true
-  refreshMessage.value = ''
-  error.value = ''
-  try {
-    const result = await refreshSnapshots(request.value)
-    bookData.value = null
-    refreshMessage.value = `刷新成功：${Object.keys(result.snapshots).length} 个快照已更新，正在重新计算`
-    await loadAnalysis()
-  } catch (err) {
-    refreshMessage.value = `刷新失败：${err instanceof Error ? err.message : String(err)}`
-  } finally {
-    refreshing.value = false
-  }
 }
 async function loadBook() {
   const includeSymbols = activeTab.value === 'users'
@@ -179,7 +163,10 @@ function reset() {
   loadAnalysis()
 }
 watch(() => request.value.rules, () => { rulesDirty.value = true }, { deep: true })
-onMounted(loadAnalysis)
+onMounted(async () => {
+  try { warehouseStatus.value = await fetchWarehouseStatus() } catch (err) { error.value = err instanceof Error ? err.message : String(err) }
+  await loadAnalysis()
+})
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: 'overview', label: '总览' }, { id: 'users', label: '用户结构' },
   { id: 'risk-routing', label: '风险与分流' }, { id: 'direction', label: '多空分向' },
@@ -190,7 +177,7 @@ const tabs: Array<{ id: Tab; label: string }> = [
   <div class="app-shell">
     <header class="topbar"><div><span class="kicker">RISK / A-BOOK ANALYTICS</span><h1>Abook 筛选与 Book 分析</h1><p>筛选期 → 样本外验证 · 用户表现与交易详情</p></div><div class="top-actions"><button class="ghost" @click="downloadExport">导出 Abook CSV</button><span class="status-pill" :class="loading ? 'busy' : 'ready'">{{ loading ? '查询中' : '就绪' }}</span></div></header>
     <div class="layout">
-      <FilterSidebar :request="request" :data="data" :loading="loading" :rules-dirty="rulesDirty" :refreshing="refreshing" :refresh-message="refreshMessage" @apply="loadAnalysis" @reset="reset" @refresh="refreshAllSnapshots" />
+      <FilterSidebar :request="request" :data="data" :loading="loading" :rules-dirty="rulesDirty" :warehouse-status="warehouseStatus" @apply="loadAnalysis" @reset="reset" />
       <main class="content" :class="{ 'direction-content': activeTab === 'direction' }"><div v-if="error" class="alert error">{{ error }}</div><nav class="tabs"><button v-for="tab in tabs" :key="tab.id" :class="{ active: activeTab === tab.id }" @click="selectTab(tab.id)">{{ tab.label }}</button></nav>
         <template v-if="activeTab === 'overview'"><AbookAnalysis :data="data" @open="openAccount" /><KpiCards :data="data" /><SelectionFunnel :data="data" :rules-dirty="rulesDirty" /><AccountsTable :accounts="data.accounts || []" @open="openAccount" /></template>
         <template v-else-if="activeTab === 'direction'"><DirectionPanel :analytics="directionData" :loading="directionLoading" :request="directionRequest" @open="openDirectionAccount" @export="downloadDirectionExport" @run="runDirection" /></template>

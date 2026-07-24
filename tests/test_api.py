@@ -107,46 +107,31 @@ def test_analysis_returns_two_stage_payload_for_new_request():
     assert "daily_book_series" in body
 
 
-def test_refresh_snapshots_endpoint_passes_selection_and_platforms(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        "app.main.refresh_snapshots",
-        lambda start, end, platforms: calls.append((start, end, platforms))
-        or {"status": "ready", "snapshots": {}},
-    )
-
+def test_dashboard_does_not_expose_refresh_endpoint():
     response = client.post(
         "/api/abook/refresh-snapshots",
         json={
             "selection": {"start": "2026-05-01", "end": "2026-06-30"},
+            "validation": {"start": "2026-07-01", "end": "2026-07-23"},
             "platforms": ["mt5", "hh_mt5"],
         },
     )
 
+    assert response.status_code == 404
+
+
+def test_warehouse_status_is_read_only_and_reports_missing_local_data(tmp_path, monkeypatch):
+    monkeypatch.setenv("ABOOK_WAREHOUSE_PATH", str(tmp_path / "warehouse"))
+    from app.config import get_settings
+    get_settings.cache_clear()
+    try:
+        response = client.get("/api/warehouse/status")
+    finally:
+        get_settings.cache_clear()
+
     assert response.status_code == 200
-    assert calls == [("2026-05-01", "2026-06-30", ["hh_mt5", "mt5"])]
-
-
-def test_refresh_snapshots_endpoint_reports_refresh_failure(monkeypatch):
-    monkeypatch.setattr(
-        "app.main.refresh_snapshots",
-        lambda *args: {
-            "status": "error",
-            "error": "source unavailable",
-            "snapshots": {},
-        },
-    )
-
-    response = client.post(
-        "/api/abook/refresh-snapshots",
-        json={
-            "selection": {"start": "2026-05-01", "end": "2026-06-30"},
-            "platforms": ["mt5"],
-        },
-    )
-
-    assert response.status_code == 502
-    assert "source unavailable" in response.json()["detail"]
+    assert response.json()["source"] == "local"
+    assert response.json()["status"] == "missing"
 
 
 def test_account_detail_endpoint_forwards_requested_analysis_window():

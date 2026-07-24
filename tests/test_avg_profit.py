@@ -36,7 +36,11 @@ def test_avg_profit_snapshot_builder_uses_custom_daily_rows(monkeypatch):
             )
 
     fake_client = FakeClient()
-    monkeypatch.setattr(builder, "get_settings", lambda: Settings("host", 8123, "risk", "user", "password", False))
+    monkeypatch.setattr(
+        builder,
+        "get_settings",
+        lambda: Settings("host", 8123, "risk", "user", "password", False, data_source="remote"),
+    )
     monkeypatch.setattr(builder.clickhouse_connect, "get_client", lambda **kwargs: fake_client)
 
     payload = builder.build_snapshot("2026-05-01", "2026-06-30", ["mt5"])

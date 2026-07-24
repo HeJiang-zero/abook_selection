@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import type { AnalysisPayload, RequestModel } from '../types'
+import type { AnalysisPayload, RequestModel, WarehouseStatus } from '../types'
 const props = defineProps<{
   request: RequestModel
   data: AnalysisPayload
   loading: boolean
   rulesDirty: boolean
-  refreshing: boolean
-  refreshMessage: string
+  warehouseStatus: WarehouseStatus | null
 }>()
-const emit = defineEmits<{ (event: 'apply'): void; (event: 'reset'): void; (event: 'refresh'): void }>()
+const emit = defineEmits<{ (event: 'apply'): void; (event: 'reset'): void }>()
 const martingaleLevels = ['extreme', 'high', 'medium', 'low']
 function selectedMartingaleLevelCount(): number {
   const selected = props.request.rules.excluded_martingale_levels
@@ -36,13 +35,12 @@ function selectedMartingaleLevelCount(): number {
     <label class="check"><input v-model="request.news_candidate_list" type="checkbox"> 新闻候选名单（加入 Abook）</label>
     <div class="platforms"><label v-for="platform in ['mt4', 'mt5', 'hh_mt5']" :key="platform" class="check"><input v-model="request.platforms" :value="platform" type="checkbox"> {{ platform }}</label></div>
     <div class="action-row">
-      <button class="primary" :disabled="loading || refreshing || !request.platforms.length" @click="emit('apply')">{{ loading ? '正在计算…' : '应用筛选与验证' }}</button>
-      <button class="ghost" :disabled="loading || refreshing || !request.platforms.length" @click="emit('refresh')">{{ refreshing ? '正在刷新…' : '刷新全部数据' }}</button>
+      <button class="primary" :disabled="loading || !request.platforms.length" @click="emit('apply')">{{ loading ? '正在计算…' : '应用筛选与验证' }}</button>
     </div>
     <div v-if="data.martingale" class="status-box" :class="data.martingale.status === 'ready' ? 'ok' : 'warn'"><strong>{{ data.martingale.message || `马丁过滤：${data.martingale.status}` }}</strong><span>确认拦截 {{ data.martingale.blocked_users ?? 0 }} 人 · confirmed {{ data.martingale.confirmed_users ?? 0 }} 人 · 疑似马丁 {{ data.martingale.suspected_users ?? 0 }} 人</span></div>
-    <div v-if="data.martingale?.missing_platforms?.length || data.risk_management?.missing_platforms?.length || data.avg_profit?.missing_platforms?.length" class="status-box warn"><strong>当前平台快照不完整</strong><span>缺少平台：{{ [...new Set([...(data.martingale?.missing_platforms || []), ...(data.risk_management?.missing_platforms || []), ...(data.avg_profit?.missing_platforms || [])])].join('、') }}；请点击“刷新全部数据”后再应用筛选，否则该平台不会有完整的马丁、杠杆和盈利快照保护。</span></div>
+    <div v-if="data.martingale?.missing_platforms?.length || data.risk_management?.missing_platforms?.length || data.avg_profit?.missing_platforms?.length" class="status-box warn"><strong>当前平台快照不完整</strong><span>缺少平台：{{ [...new Set([...(data.martingale?.missing_platforms || []), ...(data.risk_management?.missing_platforms || []), ...(data.avg_profit?.missing_platforms || [])])].join('、') }}；请先在终端运行 scripts/refresh_local_data.py。</span></div>
     <div v-if="data.avg_profit" class="status-box" :class="data.avg_profit.status === 'ready' ? 'ok' : 'warn'"><strong>avg_profit 本地快照：{{ data.avg_profit.status }}</strong><span>{{ data.avg_profit.records ?? 0 }} 条用户记录 · CUSTOM 活跃日均值<span v-if="data.avg_profit.source_min"> · {{ data.avg_profit.source_min }}～{{ data.avg_profit.source_max }}</span></span></div>
-    <p v-if="refreshMessage" class="hint" :class="{ warning: refreshMessage.includes('失败') }">{{ refreshMessage }}</p>
+    <div v-if="warehouseStatus" class="status-box" :class="warehouseStatus.status === 'ready' ? 'ok' : 'warn'"><strong>本地 Warehouse：{{ warehouseStatus.status }}</strong><span v-if="warehouseStatus.data_start">覆盖 {{ warehouseStatus.data_start }}～{{ warehouseStatus.data_end }} · {{ warehouseStatus.updated_at || '尚未同步' }}</span><span v-else>请运行 scripts/refresh_local_data.py 同步数据</span></div>
     <p v-if="rulesDirty" class="hint warning">参数已修改，点击应用后重新计算。</p>
   </aside>
 </template>

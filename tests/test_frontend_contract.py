@@ -192,16 +192,16 @@ def test_bbook_phase_pnl_is_explicit_in_overview_and_user_structure():
         assert label in user_structure
 
 
-def test_frontend_exposes_refresh_all_data_button_and_request_contract():
+def test_frontend_does_not_expose_remote_refresh_controls():
     sidebar = (ROOT / "frontend/src/components/FilterSidebar.vue").read_text()
     api = (ROOT / "frontend/src/api.ts").read_text()
     app = (ROOT / "frontend/src/App.vue").read_text()
 
-    assert "刷新全部数据" in sidebar
-    assert "refreshSnapshots" in api
-    assert "refresh-snapshots" in api
-    assert "refreshing" in app
-    assert "bookData.value = null" in app
+    assert "刷新全部数据" not in sidebar
+    assert "refreshSnapshots" not in api
+    assert "refresh-snapshots" not in api
+    assert "refreshing" not in app
+    assert "应用筛选与验证" in sidebar
 
 
 def test_frontend_exposes_abook_analysis_and_account_detail_contract():
@@ -490,10 +490,13 @@ def test_pnl_distribution_cards_use_two_columns_per_row():
     assert ".distribution-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
 
 
-def test_dashboard_layout_keeps_overview_within_previous_content_width():
+def test_dashboard_layout_fills_available_width_without_page_overflow():
     styles = _source("style.css")
 
-    assert ".layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 22px; max-width: 1600px;" in styles
+    assert "body { margin: 0; min-width: 0; overflow-x: hidden;" in styles
+    assert ".app-shell { width: 100%;" in styles
+    assert ".layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 22px; width: 100%;" in styles
+    assert ".content, .panel, .two-col" in styles
 
 
 def test_book_performance_renders_company_profit_comparison_as_chart():

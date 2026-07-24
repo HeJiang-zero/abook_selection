@@ -69,17 +69,16 @@ export interface DirectionAnalyticsPayload {
   rules?: Record<string, any>
 }
 
-export interface SnapshotRefreshResponse {
+export interface WarehouseStatus {
+  source: string
   status: string
-  selection_start: string
-  selection_end: string
-  snapshots: Record<string, {
-    status: string
-    path: string
-    records: number
-    selection_start: string
-    selection_end: string
-  }>
+  warehouse_path?: string
+  generation?: string | null
+  updated_at?: string | null
+  data_start?: string | null
+  data_end?: string | null
+  platforms?: string[]
+  snapshots?: Record<string, { status: string; warehouse_generation?: string | null }>
 }
 
 export interface AccountDetailPayload {
