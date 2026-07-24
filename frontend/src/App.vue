@@ -13,17 +13,18 @@ import DirectionPanel from './components/DirectionPanel.vue'
 
 const defaultRules: Record<string, number | string[] | boolean> = {
   min_trades: 75, min_win_rate: 0.5, min_profit_factor: 1.25,
-  min_payoff_ratio: 0.4,
+  min_payoff_ratio: 0.6,
+  min_long_trades_ratio: 0.3, max_long_trades_ratio: 0.7,
   max_top1_day_profit_contribution: 0.3,
-  max_leverage_p95_ratio: 5000, max_high_leverage_holding_seconds: 300,
+  max_leverage_p95_ratio: 2000, max_high_leverage_holding_seconds: 60,
   high_confidence_trades: 100, high_confidence_days: 30,
-  enable_r4: false, r4_min_passing_weeks: 1,
   excluded_martingale_levels: ['extreme', 'high', 'medium', 'low'],
 }
 const request = ref<RequestModel>({
-  selection: { start: '2026-05-01', end: '2026-06-30' }, validation: { start: '2026-07-01', end: '2026-07-16' },
+  selection: { start: '2026-05-01', end: '2026-06-30' }, validation: { start: '2026-07-01', end: '2026-07-22' },
   platforms: ['mt4', 'mt5', 'hh_mt5'], filters: { groups: [], logins: [] }, rules: { ...defaultRules }, personal_candidate_list: false, news_candidate_list: false,
 })
+const directionRequest = ref<RequestModel>(JSON.parse(JSON.stringify(request.value)) as RequestModel)
 const data = ref<AnalysisPayload>({ accounts: [] })
 const activeTab = ref<Tab>('overview')
 const loading = ref(false)
@@ -37,6 +38,7 @@ const bookData = ref<any | null>(null)
 const directionData = ref<DirectionAnalyticsPayload | null>(null)
 const directionLoading = ref(false)
 const selectedAccount = ref<AccountRow | null>(null)
+const selectedDirectionAccount = ref<Record<string, any> | null>(null)
 const accountDetail = ref<AccountDetailPayload | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
@@ -44,7 +46,7 @@ let detailRequestId = 0
 
 async function loadAnalysis(options: { preserveAccount?: boolean } = { preserveAccount: true }) {
   const accountBeforeRefresh = selectedAccount.value
-  loading.value = true; error.value = ''; bookData.value = null; directionData.value = null; bookSymbolsLoaded.value = false
+  loading.value = true; error.value = ''; bookData.value = null; directionData.value = null; selectedDirectionAccount.value = null; bookSymbolsLoaded.value = false
   if (!options.preserveAccount) {
     closeAccount()
   }
@@ -58,13 +60,15 @@ async function loadAnalysis(options: { preserveAccount?: boolean } = { preserveA
   } catch (err) { error.value = err instanceof Error ? err.message : String(err) } finally { loading.value = false }
 }
 async function openAccount(account: AccountRow) {
+  const appliedDirectionAccount = directionData.value?.accounts?.find(item => item.platform === account.platform && item.login === account.login) || null
   const requestId = ++detailRequestId
   selectedAccount.value = account
+  selectedDirectionAccount.value = appliedDirectionAccount
   accountDetail.value = null
   detailError.value = ''
   detailLoading.value = true
   try {
-    const detail = await fetchAccountDetail(account, request.value)
+    const detail = await fetchAccountDetail(account, appliedDirectionAccount ? directionRequest.value : request.value)
     if (requestId === detailRequestId) accountDetail.value = detail
   } catch (err) {
     if (requestId === detailRequestId) detailError.value = err instanceof Error ? err.message : String(err)
@@ -75,6 +79,7 @@ async function openAccount(account: AccountRow) {
 function closeAccount() {
   detailRequestId += 1
   selectedAccount.value = null
+  selectedDirectionAccount.value = null
   accountDetail.value = null
   detailError.value = ''
 }
@@ -112,12 +117,13 @@ async function loadDirection() {
   if (directionData.value || directionLoading.value || activeTab.value !== 'direction') return
   directionLoading.value = true
   try {
-    directionData.value = await fetchDirectionAnalytics(request.value, data.value.analysis_token)
+    directionData.value = await fetchDirectionAnalytics(directionRequest.value, data.value.analysis_token)
   } catch (err) { error.value = err instanceof Error ? err.message : String(err) } finally { directionLoading.value = false }
 }
 async function runDirection() {
   activeTab.value = 'direction'
   directionData.value = null
+  selectedDirectionAccount.value = null
   await loadDirection()
 }
 async function downloadExport() {
@@ -143,10 +149,35 @@ function downloadDirectionExport() {
 }
 function openDirectionAccount(account: Record<string, any>) {
   const match = (data.value.accounts || []).find(item => item.platform === account.platform && item.login === account.login)
-  if (match) openAccount(match)
+  if (match) {
+    openAccount(match)
+    return
+  }
+  openAccount({
+    platform: account.platform,
+    login: account.login,
+    account_group: account.account_group || '',
+    book: account.book || 'bbook',
+    selection_source: 'direction',
+    selection_client_net_pnl: 0,
+    validation_client_net_pnl: 0,
+    validation_status: 'unknown',
+    selection: {},
+    validation: {},
+    stability: { score: 0, tier: '—' },
+    selection_flags: [],
+  } as AccountRow)
 }
 function selectTab(tab: Tab) { activeTab.value = tab; if (tab !== 'overview' && tab !== 'direction') loadBook() }
-function reset() { request.value.rules = { ...defaultRules }; request.value.personal_candidate_list = false; request.value.news_candidate_list = false; loadAnalysis() }
+function reset() {
+  request.value.rules = { ...defaultRules }
+  request.value.personal_candidate_list = false
+  request.value.news_candidate_list = false
+  directionRequest.value.rules = { ...defaultRules }
+  directionRequest.value.personal_candidate_list = false
+  directionRequest.value.news_candidate_list = false
+  loadAnalysis()
+}
 watch(() => request.value.rules, () => { rulesDirty.value = true }, { deep: true })
 onMounted(loadAnalysis)
 const tabs: Array<{ id: Tab; label: string }> = [
@@ -162,10 +193,10 @@ const tabs: Array<{ id: Tab; label: string }> = [
       <FilterSidebar :request="request" :data="data" :loading="loading" :rules-dirty="rulesDirty" :refreshing="refreshing" :refresh-message="refreshMessage" @apply="loadAnalysis" @reset="reset" @refresh="refreshAllSnapshots" />
       <main class="content" :class="{ 'direction-content': activeTab === 'direction' }"><div v-if="error" class="alert error">{{ error }}</div><nav class="tabs"><button v-for="tab in tabs" :key="tab.id" :class="{ active: activeTab === tab.id }" @click="selectTab(tab.id)">{{ tab.label }}</button></nav>
         <template v-if="activeTab === 'overview'"><AbookAnalysis :data="data" @open="openAccount" /><KpiCards :data="data" /><SelectionFunnel :data="data" :rules-dirty="rulesDirty" /><AccountsTable :accounts="data.accounts || []" @open="openAccount" /></template>
-        <template v-else-if="activeTab === 'direction'"><DirectionPanel :analytics="directionData" :loading="directionLoading" @open="openDirectionAccount" @export="downloadDirectionExport" @run="runDirection" /></template>
-        <template v-else><BookPerformance :analytics="bookData" :loading="bookLoading" :active-tab="activeTab" :request="request" /></template>
+        <template v-else-if="activeTab === 'direction'"><DirectionPanel :analytics="directionData" :loading="directionLoading" :request="directionRequest" @open="openDirectionAccount" @export="downloadDirectionExport" @run="runDirection" /></template>
+        <template v-else><BookPerformance :analytics="bookData" :loading="bookLoading" :active-tab="activeTab" :request="request" :accounts="data.population_accounts || data.accounts || []" @open="openAccount" /></template>
       </main>
     </div>
-    <AccountDrawer :account="selectedAccount" :detail="accountDetail" :loading="detailLoading" :error="detailError" @close="closeAccount" />
+    <AccountDrawer :account="selectedAccount" :detail="accountDetail" :direction-account="selectedDirectionAccount" :loading="detailLoading" :error="detailError" @close="closeAccount" />
   </div>
 </template>

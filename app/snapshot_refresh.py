@@ -9,13 +9,11 @@ from typing import Any, Callable
 
 from scripts.build_avg_profit_snapshot import build_snapshot as avg_profit_build_snapshot
 from scripts.build_martingale_snapshot import build_snapshot as martingale_build_snapshot
-from scripts.build_r4_snapshot import build_snapshot as r4_build_snapshot
 from scripts.build_user_risk_snapshot import build_snapshot as risk_build_snapshot
 
 from .avg_profit import snapshot_path as avg_profit_snapshot_path
 from .martingale import snapshot_path as martingale_snapshot_path
 from .risk import snapshot_path as risk_snapshot_path
-from .r4 import snapshot_path as r4_snapshot_path
 
 
 _REFRESH_LOCK = threading.Lock()
@@ -26,7 +24,6 @@ def snapshot_paths() -> dict[str, Path]:
         "risk": risk_snapshot_path(),
         "avg_profit": avg_profit_snapshot_path(),
         "martingale": martingale_snapshot_path(),
-        "r4": r4_snapshot_path(),
     }
 
 
@@ -58,7 +55,6 @@ def refresh_snapshots(
         "risk": risk_build_snapshot,
         "avg_profit": avg_profit_build_snapshot,
         "martingale": martingale_build_snapshot,
-        "r4": r4_build_snapshot,
     }
     with _REFRESH_LOCK:
         paths = snapshot_paths()

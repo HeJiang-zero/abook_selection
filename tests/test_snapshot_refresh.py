@@ -18,7 +18,7 @@ def _load_request_model():
     return model
 
 
-def test_refresh_snapshots_builds_all_four_payloads_with_current_selection(monkeypatch, tmp_path):
+def test_refresh_snapshots_builds_all_three_payloads_with_current_selection(monkeypatch, tmp_path):
     snapshot_refresh = _load_snapshot_refresh()
     calls = []
     monkeypatch.setattr(
@@ -36,16 +36,10 @@ def test_refresh_snapshots_builds_all_four_payloads_with_current_selection(monke
         "martingale_build_snapshot",
         lambda start, end, platforms: calls.append(("martingale", start, end, platforms)) or {"records": [{"login": 1}]},
     )
-    monkeypatch.setattr(
-        snapshot_refresh,
-        "r4_build_snapshot",
-        lambda start, end, platforms: calls.append(("r4", start, end, platforms)) or {"records": [{"login": 1}]},
-    )
     paths = {
         "risk": tmp_path / "risk.json",
         "avg_profit": tmp_path / "avg_profit.json",
         "martingale": tmp_path / "martingale.json",
-        "r4": tmp_path / "r4.json",
     }
     monkeypatch.setattr(snapshot_refresh, "snapshot_paths", lambda: paths)
 
@@ -56,7 +50,6 @@ def test_refresh_snapshots_builds_all_four_payloads_with_current_selection(monke
         ("risk", "2026-05-01", "2026-06-30"),
         ("avg_profit", "2026-05-01", "2026-06-30"),
         ("martingale", "2026-05-01", "2026-06-30"),
-        ("r4", "2026-05-01", "2026-06-30"),
     }
     assert all(path.exists() for path in paths.values())
     assert all(platforms == ["mt4", "mt5", "hh_mt5"] for _, _, _, platforms in calls)
@@ -79,7 +72,6 @@ def test_refresh_snapshots_keeps_existing_files_when_a_builder_fails(monkeypatch
         lambda *args: (_ for _ in ()).throw(RuntimeError("source unavailable")),
     )
     monkeypatch.setattr(snapshot_refresh, "martingale_build_snapshot", lambda *args: {"records": []})
-    monkeypatch.setattr(snapshot_refresh, "r4_build_snapshot", lambda *args: {"records": []})
 
     result = snapshot_refresh.refresh_snapshots("2026-05-01", "2026-06-30", ["mt5"])
 

@@ -42,9 +42,6 @@ export interface AccountRow {
   confirmed_extreme_windows?: number
   expanded_windows?: number
   martingale_layer_hits?: Record<string, boolean>
-  r4_pass?: boolean
-  r4_passing_weeks?: number
-  r4_record?: Record<string, any>
   july_new_user?: boolean
 }
 
@@ -109,6 +106,31 @@ export interface AccountDetailPayload {
     }>
   }>
   martingale?: Record<string, any>
+  direction_summary?: DirectionSummary
+}
+
+export interface DirectionMetric {
+  trade_count: number
+  winning_trades?: number
+  losing_trades?: number
+  win_rate: number | null
+  profit_factor: number | null
+  payoff_ratio: number | null
+  side_pnl: number
+  sample_status: string
+}
+
+export interface DirectionSummaryPhase {
+  long: DirectionMetric
+  short: DirectionMetric
+  long_trades_ratio: number | null
+  short_trades_ratio: number | null
+}
+
+export interface DirectionSummary {
+  basis: 'matched.profit'
+  selection: DirectionSummaryPhase
+  validation: DirectionSummaryPhase
 }
 
 export interface AnalysisPayload {

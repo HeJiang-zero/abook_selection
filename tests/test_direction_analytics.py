@@ -59,7 +59,7 @@ def _account(login: int, *, book: str = "bbook", **extra):
     }
 
 
-def test_direction_payload_classifies_independent_sides_and_excludes_r4_candidate_overrides():
+def test_direction_payload_classifies_independent_sides_without_candidate_overrides():
     request = AnalysisRequest(
         platforms=["mt5"],
         rules={"min_trades": 2, "min_win_rate": 0.5, "min_profit_factor": 1.25, "min_payoff_ratio": 0.4, "max_top1_day_profit_contribution": 0.8},
@@ -77,7 +77,6 @@ def test_direction_payload_classifies_independent_sides_and_excludes_r4_candidat
             book="abook",
             selection_source="personal_candidate_list",
             abook_rules_pass=False,
-            r4_pass=True,
             is_personal_candidate=True,
             is_news_candidate=True,
         )
@@ -165,6 +164,55 @@ def test_direction_payload_user_list_keeps_only_accounts_with_material_pnl():
     assert payload["book_sets"]["all"]["bbook"]["long"]["accounts"] == 2
 
 
+def test_direction_payload_applies_shared_long_trades_ratio_gate():
+    request = AnalysisRequest(
+        platforms=["mt5"],
+        rules={
+            "min_trades": 1,
+            "min_win_rate": 0,
+            "min_profit_factor": 0,
+            "min_payoff_ratio": 0,
+            "min_long_trades_ratio": 0.3,
+            "max_long_trades_ratio": 0.7,
+            "max_top1_day_profit_contribution": 1.0,
+        },
+    )
+    balanced = []
+    skewed = []
+    for direction in ("Long", "Short"):
+        balanced.extend([
+            _fact(20, direction, "selection", "month", trades=2, wins=2, pnl=20, gross_wins=20),
+            _fact(20, direction, "selection", "day", trades=1, wins=1, pnl=10, gross_wins=10),
+            _fact(20, direction, "selection", "day", day="2026-05-04", trades=1, wins=1, pnl=10, gross_wins=10),
+        ])
+    skewed.extend([
+        _fact(21, "Long", "selection", "month", trades=4, wins=4, pnl=40, gross_wins=40),
+        _fact(21, "Long", "selection", "day", trades=2, wins=2, pnl=20, gross_wins=20),
+        _fact(21, "Long", "selection", "day", day="2026-05-04", trades=2, wins=2, pnl=20, gross_wins=20),
+        _fact(21, "Short", "selection", "month", trades=1, wins=1, pnl=10, gross_wins=10),
+        _fact(21, "Short", "selection", "day", trades=1, wins=1, pnl=10, gross_wins=10),
+    ])
+
+    payload = build_direction_analytics_payload(
+        balanced + skewed,
+        [_account(20), _account(21)],
+        request,
+    )
+    accounts = {account["login"]: account for account in payload["accounts"]}
+
+    assert accounts[20]["long_pass"] is True
+    assert accounts[20]["short_pass"] is True
+    assert accounts[20]["shared_gates"]["direction_balance_pass"] is True
+    assert accounts[21]["long_pass"] is False
+    assert accounts[21]["short_pass"] is False
+    assert accounts[21]["shared_gates"]["direction_balance_pass"] is False
+    assert "long_trades_ratio" in accounts[21]["selection_flags_long"]
+    assert payload["rules"]["min_long_trades_ratio"] == 0.3
+    assert payload["rules"]["max_long_trades_ratio"] == 0.7
+    assert payload["rules"]["max_leverage_p95_ratio"] == 2000.0
+    assert payload["rules"]["max_high_leverage_holding_seconds"] == 60.0
+
+
 def test_direction_payload_keeps_all_independently_passing_accounts_for_list_counts():
     request = AnalysisRequest(
         platforms=["mt5"],
@@ -173,6 +221,8 @@ def test_direction_payload_keeps_all_independently_passing_accounts_for_list_cou
             "min_win_rate": 0,
             "min_profit_factor": 0,
             "min_payoff_ratio": 0,
+            "min_long_trades_ratio": 0.0,
+            "max_long_trades_ratio": 1.0,
             "max_top1_day_profit_contribution": 1.0,
         },
     )
@@ -214,6 +264,7 @@ def test_direction_comparison_keeps_total_abook_deals_pnl_separate_from_matched_
     total = _account(4, book="abook", validation={"client_net_pnl": 123.0})
     payload = build_direction_analytics_payload([], [total], request)
 
+    assert payload["comparison"]["total_abook_validation_matched_profit"] == 0.0
     assert payload["comparison"]["total_abook_validation_client_net_pnl"] == 123.0
     assert payload["comparison"]["both_pass_validation_matched_profit"] == 0.0
 

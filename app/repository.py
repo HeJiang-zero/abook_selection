@@ -8,6 +8,7 @@ from .config import Settings, get_settings
 from .models import AnalysisRequest
 from .queries import (
     build_account_detail_query,
+    build_account_direction_summary_query,
     build_analysis_query,
     build_book_symbol_query,
     build_daily_pnl_query,
@@ -106,6 +107,29 @@ class ClickHouseRepository:
 
     def fetch_account_detail(self, platform: str, login: int, start: str, end: str) -> list[dict[str, Any]]:
         query, params = build_account_detail_query(platform, login, start, end)
+        return self._rows(query, params)
+
+    def fetch_account_direction_summary(
+        self,
+        platform: str,
+        login: int,
+        start: str,
+        end: str,
+        selection_start: str,
+        selection_end: str,
+        validation_start: str,
+        validation_end: str,
+    ) -> list[dict[str, Any]]:
+        query, params = build_account_direction_summary_query(
+            platform,
+            login,
+            start,
+            end,
+            selection_start,
+            selection_end,
+            validation_start,
+            validation_end,
+        )
         return self._rows(query, params)
 
     def fetch_book_symbol_rows(self, request: AnalysisRequest, account_keys: set[tuple[str, int]] | None = None) -> list[dict[str, Any]]:

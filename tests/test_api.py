@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+import inspect
 
 from fastapi.testclient import TestClient
 
@@ -71,7 +72,7 @@ def test_analysis_returns_two_stage_payload_for_new_request():
                     "daily_positive_sum": Decimal("100"), "daily_negative_sum": Decimal("-10"),
                     "max_positive_day": Decimal("10"), "min_negative_day": Decimal("-2"),
                     "flat_profit_days": 0, "turnover": Decimal("100"), "avg_holding_seconds": Decimal("5"),
-                    "median_holding_seconds": Decimal("5"), "long_trades": 15, "short_trades": 5, "symbols_traded": 1,
+                        "median_holding_seconds": Decimal("5"), "long_trades": 10, "short_trades": 10, "symbols_traded": 1,
                 })
             return rows
 
@@ -181,6 +182,10 @@ def test_account_detail_endpoint_forwards_requested_analysis_window():
                 },
             ]
 
+        def fetch_account_direction_summary(self, platform, login, start, end, selection_start, selection_end, validation_start, validation_end):
+            calls.append(("direction", platform, login, start, end, selection_start, selection_end, validation_start, validation_end))
+            return []
+
     app.dependency_overrides[get_repository] = lambda: FakeRepository()
     try:
         response = client.get(
@@ -190,14 +195,26 @@ def test_account_detail_endpoint_forwards_requested_analysis_window():
                 "end": "2026-07-16",
                 "selection_start": "2026-05-01",
                 "selection_end": "2026-06-30",
+                "validation_start": "2026-07-01",
+                "validation_end": "2026-07-16",
             },
         )
     finally:
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert calls == [("mt5", 7, "2026-05-01", "2026-07-16")]
+    assert calls == [
+        ("mt5", 7, "2026-05-01", "2026-07-16"),
+        ("direction", "mt5", 7, "2026-05-01", "2026-07-16", "2026-05-01", "2026-06-30", "2026-07-01", "2026-07-16"),
+    ]
+    assert response.json()["direction_summary"]["basis"] == "matched.profit"
     assert response.json()["markout"]["entry"]["curve"]
+
+
+def test_account_detail_default_end_matches_dashboard_validation_default():
+    from app.main import account_detail
+
+    assert inspect.signature(account_detail).parameters["end"].default == "2026-07-22"
 
 
 def test_analysis_routes_population_accounts_even_when_risk_sql_excludes_some(monkeypatch):

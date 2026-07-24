@@ -48,6 +48,8 @@ export async function fetchAccountDetail(account: AccountRow, request: RequestMo
     end,
     selection_start: request.selection.start,
     selection_end: request.selection.end,
+    validation_start: request.validation.start,
+    validation_end: request.validation.end,
   })
   const response = await fetch(`/api/abook/accounts/${encodeURIComponent(account.platform)}/${account.login}?${params.toString()}`)
   if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`)

@@ -4,7 +4,7 @@
 
 **Goal:** Add configurable selection-period long-trades ratio filtering to Abook routing, its parameter sidebar, and the qualification funnel.
 
-**Architecture:** Reuse the existing `long_trades` and `short_trades` fields from the account-period aggregation. Pass two validated thresholds through the existing request-to-service path, apply the inclusive interval to normal and R4 Abook routing, and expose the result through the existing selection metrics, flags, rules payload, and funnel stages.
+**Architecture:** Reuse the existing `long_trades` and `short_trades` fields from the account-period aggregation. Pass two validated thresholds through the existing request-to-service path, apply the inclusive interval to normal Abook routing, and expose the result through the existing selection metrics, flags, rules payload, and funnel stages.
 
 **Tech Stack:** Python, Pydantic, FastAPI service functions, Vue 3, TypeScript, pytest, Vite.
 
@@ -68,7 +68,7 @@ Run `pytest tests/test_service.py -q`; expect failure because the service has no
 
 - [ ] **Step 3: Implement ratio aggregation and routing**
 
-Expose `long_trades_ratio` from `_aggregate_account`, apply the inclusive interval to normal and R4 routes, and append `long_trades_ratio` to `selection_flags` when the normal route fails it.
+Expose `long_trades_ratio` from `_aggregate_account`, apply the inclusive interval to the normal route, and append `long_trades_ratio` to `selection_flags` when the route fails it.
 
 - [ ] **Step 4: Thread rules from the API**
 

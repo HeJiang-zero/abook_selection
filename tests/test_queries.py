@@ -1,4 +1,32 @@
-from app.queries import build_analysis_query, build_daily_pnl_query, build_direction_matched_facts_query
+from app.queries import (
+    build_account_direction_summary_query,
+    build_analysis_query,
+    build_daily_pnl_query,
+    build_direction_matched_facts_query,
+)
+
+
+def test_account_direction_summary_query_aggregates_matched_trades_by_phase_and_direction():
+    query, params = build_account_direction_summary_query(
+        platform="mt5",
+        login=7,
+        start="2026-05-01",
+        end="2026-07-16",
+        selection_start="2026-05-01",
+        selection_end="2026-06-30",
+        validation_start="2026-07-01",
+        validation_end="2026-07-16",
+    )
+
+    assert "risk.dwd_matched_trades AS mt FINAL" in query
+    assert "mt.direction IN ('Long', 'Short')" in query
+    assert "countIf(mt.profit > 0) AS winning_trades" in query
+    assert "sumIf(toFloat64(mt.profit), mt.profit > 0) AS gross_wins" in query
+    assert "GROUP BY phase, direction" in query
+    assert params["platform"] == "mt5"
+    assert params["login"] == 7
+    assert params["selection_end_exclusive"] == "2026-07-01"
+    assert params["validation_end_exclusive"] == "2026-07-17"
 
 
 def test_direction_query_returns_only_matched_profit_facts_with_direction_and_daily_buckets():

@@ -9,6 +9,7 @@ from .book_analytics import PNL_BUCKETS
 from .service import (
     _account_period_metrics,
     _leverage_filter_pass,
+    _long_trades_ratio_pass,
     _period_months,
 )
 
@@ -196,6 +197,7 @@ def _side_flags(
     min_payoff_ratio: float,
     max_top1_day_profit_contribution: float,
     leverage_pass: bool,
+    direction_balance_pass: bool,
     martingale_hard_block: bool,
 ) -> tuple[bool, list[str]]:
     flags: list[str] = []
@@ -211,6 +213,8 @@ def _side_flags(
         flags.append("payoff_ratio")
     if metric["top_positive_day_concentration"] >= max_top1_day_profit_contribution:
         flags.append("profit_concentration")
+    if not direction_balance_pass:
+        flags.append("long_trades_ratio")
     if not leverage_pass:
         flags.append("leverage_p95_ratio")
     if martingale_hard_block:
@@ -514,22 +518,33 @@ def build_direction_analytics_payload(
                 metric = _side_metric(normalized[(key, side, phase)], base, phase)
                 metric["sample_status"] = _sample_status(metric, rules.min_trades)
                 phase_data[phase] = metric
+            side_data[side] = {
+                "selection": phase_data["selection"],
+                "validation": phase_data["validation"],
+            }
+        long_trades = int(side_data["long"]["selection"]["trade_count"])
+        short_trades = int(side_data["short"]["selection"]["trade_count"])
+        long_trade_share = round(long_trades / max(1, long_trades + short_trades), 6)
+        short_trade_share = round(short_trades / max(1, long_trades + short_trades), 6)
+        direction_balance_pass = _long_trades_ratio_pass(
+            {"long_trades_ratio": long_trade_share},
+            rules.min_long_trades_ratio,
+            rules.max_long_trades_ratio,
+        )
+        for side in DIRECTIONS.values():
             passed, flags = _side_flags(
-                phase_data["selection"],
+                side_data[side]["selection"],
                 min_trades=rules.min_trades,
                 min_win_rate=rules.min_win_rate,
                 min_profit_factor=rules.min_profit_factor,
                 min_payoff_ratio=rules.min_payoff_ratio,
                 max_top1_day_profit_contribution=rules.max_top1_day_profit_contribution,
                 leverage_pass=leverage_pass,
+                direction_balance_pass=direction_balance_pass,
                 martingale_hard_block=martingale_hard_block,
             )
-            side_data[side] = {
-                "selection": phase_data["selection"],
-                "validation": phase_data["validation"],
-                "pass": passed,
-                "selection_flags": flags,
-            }
+            side_data[side]["pass"] = passed
+            side_data[side]["selection_flags"] = flags
         long_status = side_data["long"]["selection"]["sample_status"]
         short_status = side_data["short"]["selection"]["sample_status"]
         long_pass = bool(side_data["long"]["pass"])
@@ -547,10 +562,11 @@ def build_direction_analytics_payload(
             "in_total_abook": key in total_abook_keys,
             "selection_flags_long": side_data["long"]["selection_flags"],
             "selection_flags_short": side_data["short"]["selection_flags"],
-            "long_trade_share": round(side_data["long"]["selection"]["trade_count"] / max(1, side_data["long"]["selection"]["trade_count"] + side_data["short"]["selection"]["trade_count"]), 6),
-            "short_trade_share": round(side_data["short"]["selection"]["trade_count"] / max(1, side_data["long"]["selection"]["trade_count"] + side_data["short"]["selection"]["trade_count"]), 6),
+            "long_trade_share": long_trade_share,
+            "short_trade_share": short_trade_share,
             "shared_gates": {
                 "leverage_pass": leverage_pass,
+                "direction_balance_pass": direction_balance_pass,
                 "martingale_hard_block": martingale_hard_block,
             },
         }
@@ -618,6 +634,14 @@ def build_direction_analytics_payload(
             "total_abook_and_both_pass": sum(1 for account in groups["both_pass"] if account["in_total_abook"]),
             "abook_but_one_sided": len(abook_but_one_sided),
             "both_pass_not_total_abook": len(both_not_abook),
+            "total_abook_validation_matched_profit": round(
+                sum(
+                    float(account["long"]["validation"].get("side_pnl", 0) or 0)
+                    + float(account["short"]["validation"].get("side_pnl", 0) or 0)
+                    for account in total_abook
+                ),
+                6,
+            ),
             "total_abook_validation_client_net_pnl": round(sum(float(account.get("validation", {}).get("client_net_pnl", 0) or 0) for account in total_abook_base), 6),
             "both_pass_validation_matched_profit": round(sum(float(account["long"]["validation"].get("side_pnl", 0) or 0) + float(account["short"]["validation"].get("side_pnl", 0) or 0) for account in groups["both_pass"]), 6),
         },
@@ -626,8 +650,11 @@ def build_direction_analytics_payload(
             "min_win_rate": rules.min_win_rate,
             "min_profit_factor": rules.min_profit_factor,
             "min_payoff_ratio": rules.min_payoff_ratio,
+            "min_long_trades_ratio": rules.min_long_trades_ratio,
+            "max_long_trades_ratio": rules.max_long_trades_ratio,
             "max_top1_day_profit_contribution": rules.max_top1_day_profit_contribution,
+            "max_leverage_p95_ratio": rules.max_leverage_p95_ratio,
+            "max_high_leverage_holding_seconds": rules.max_high_leverage_holding_seconds,
             "candidate_overrides_included": False,
-            "r4_included": False,
         },
     }

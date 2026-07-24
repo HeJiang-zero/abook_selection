@@ -47,8 +47,8 @@ def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
     assert "马丁" in sidebar
     for rule in [
         "min_trades", "min_payoff_ratio", "max_top1_day_profit_contribution",
-        "max_leverage_p95_ratio", "excluded_martingale_levels", "enable_r4",
-        "r4_min_passing_weeks",
+        "max_leverage_p95_ratio", "excluded_martingale_levels",
+        "min_long_trades_ratio", "max_long_trades_ratio",
     ]:
         assert rule in sidebar
     assert "min_active_days" not in sidebar
@@ -69,12 +69,13 @@ def test_frontend_default_rules_match_backend_july_tuned_profile():
     assert "min_trades: 75" in app
     assert "min_win_rate: 0.5" in app
     assert "min_profit_factor: 1.25" in app
-    assert "min_payoff_ratio: 0.4" in app
+    assert "min_payoff_ratio: 0.6" in app
     assert "max_top1_day_profit_contribution: 0.3" in app
-    assert "max_leverage_p95_ratio: 5000" in app
-    assert "max_high_leverage_holding_seconds: 300" in app
+    assert "max_leverage_p95_ratio: 2000" in app
+    assert "max_high_leverage_holding_seconds: 60" in app
     assert "platforms: ['mt4', 'mt5', 'hh_mt5']" in app
-    assert "enable_r4: false" in app
+    assert "min_long_trades_ratio: 0.3" in app
+    assert "max_long_trades_ratio: 0.7" in app
 
 
 def test_frontend_uses_new_analysis_actions_and_book_lazy_load():
@@ -224,18 +225,18 @@ def test_frontend_exposes_pnl_audit_and_funnel_criteria_contract():
     funnel = (ROOT / "frontend/src/components/SelectionFunnel.vue").read_text()
     analysis = (ROOT / "frontend/src/components/AbookAnalysis.vue").read_text()
 
-    assert "2026-07-16" in app
+    assert "2026-07-22" in app
     for rule in [
         "min_trades", "min_win_rate", "min_profit_factor",
         "min_payoff_ratio", "max_top1_day_profit_contribution",
-        "max_leverage_p95_ratio", "excluded_martingale_levels",
+        "max_leverage_p95_ratio", "excluded_martingale_levels", "min_long_trades_ratio",
     ]:
         assert rule in funnel
     assert "min_active_days" not in funnel
     assert "selection_months_positive" not in funnel
-    assert "R4 独立通道" in funnel
-    assert "r4_thresholds" in funnel
     assert "筛选标准" in funnel
+    assert "direction_balance_passed" in funnel
+    assert "long_trades_ratio" in funnel
     assert "selection_client_net_pnl" in analysis
     assert "june_client_net_pnl" in analysis
     assert "5月 P&amp;L" in analysis and "6月 P&amp;L" in analysis and "7月 P&amp;L" in analysis
@@ -269,7 +270,6 @@ def test_frontend_exposes_direction_analytics_as_the_fifth_lazy_tab():
     for field in ["pnl_distribution", "cumulative_pnl"]:
         assert field in panel
     assert "personal_candidate" not in panel
-    assert "r4" not in panel.lower()
 
 
 def test_direction_panel_requires_explicit_run_button_dynamic_phase_table_and_sorting():
@@ -278,7 +278,12 @@ def test_direction_panel_requires_explicit_run_button_dynamic_phase_table_and_so
 
     assert "运行分向筛选" in panel
     assert "emit('run')" in panel
+    assert "分向筛选参数" in panel
+    assert "不会自动查询" in panel
+    assert "directionRequest" in app
     assert "@run=\"runDirection\"" in app
+    assert "directionRequest.value.rules = { ...defaultRules }" in app
+    assert "long_trades_ratio: '多空比例未达标'" in panel
     assert "sortBy" in panel
     assert "sortDirection" in panel
     assert "toggleSort" in panel
@@ -295,7 +300,7 @@ def test_direction_panel_splits_book_side_phase_and_keeps_only_material_pnl_acco
     assert "book_sets" in panel and "book_sets" in types
     assert "Math.abs" in panel
     assert "side_pnl" in panel
-    assert "Math.abs(number(metric.side_pnl)) > 10" in panel
+    assert "Math.abs(number(longMetric.side_pnl)) > 10 || Math.abs(number(shortMetric.side_pnl)) > 10" in panel
     assert "cumulativeChart" in panel
     assert "echarts" in panel
     for removed in ["style_breakdown", "holding_duration_bins", "trade_volume_bins"]:
@@ -321,17 +326,50 @@ def test_direction_panel_uses_two_pnl_bars_eight_row_pagination_and_search_actio
     assert "cumulative_pnl?.full" in panel
 
 
-def test_direction_panel_removes_route_selector_but_compares_abook_bbook_by_direction():
+def test_direction_panel_filters_or_compares_abook_bbook_by_direction():
     panel = _source("components/DirectionPanel.vue")
 
-    assert "activeBook" not in panel
-    assert "路由<select" not in panel
+    assert "activeBook" in panel
+    assert "路由<select" in panel
     assert "books" in panel
     assert "long_pass" in panel and "short_pass" in panel
     assert "Abook" in panel and "Bbook" in panel
     assert "cumulativeCharts" in panel
     assert "series" in panel
     assert "account.book" in panel
+
+
+def test_direction_panel_charts_follow_active_set_and_expose_material_pnl_toggle():
+    panel = _source("components/DirectionPanel.vue")
+
+    assert "payloadFor(book, activeSet.value)" in panel
+    assert "hideSmallPnl" in panel
+    assert "隐藏小额 ±10" in panel
+    assert "显示 {{ rows.length }} / {{ filteredRows.length }}" in panel
+
+
+def test_direction_pass_kpis_open_filtered_user_list_for_drawer_navigation():
+    panel = _source("components/DirectionPanel.vue")
+
+    assert "selectedPassSet" in panel
+    assert "selectPassList(book, which)" in panel
+    assert "通过用户列表" in panel
+    assert "emit('open', account)" in panel
+
+
+def test_account_drawer_exposes_direction_summary_and_applied_result():
+    drawer = _source("components/AccountDrawer.vue")
+    app = _source("App.vue")
+    api = _source("api.ts")
+    types = _source("types.ts")
+
+    for label in ["多空分向摘要", "Long 交易比例", "Short 交易比例", "Long 胜率", "Short 胜率", "matched P&amp;L"]:
+        assert label in drawer
+    assert "directionAccount" in drawer
+    assert "最近一次已运行分向筛选结果" in drawer
+    assert "validation_start" in api and "validation_end" in api
+    assert "direction_summary" in types
+    assert "selectedDirectionAccount" in app
 
 
 def test_direction_panel_places_filters_directly_above_account_list():
@@ -341,6 +379,16 @@ def test_direction_panel_places_filters_directly_above_account_list():
     table_start = panel.index("direction-account-table")
     assert panel.index("phase-cards") < toolbar_start < table_start
     assert "phase-cards" not in panel[toolbar_start:table_start]
+
+
+def test_phase_divider_is_dashed_without_text_and_risk_tab_has_no_account_list():
+    divider = _source("phaseDivider.ts")
+    books = _source("components/BookPerformance.vue")
+
+    assert "formatter: '筛选期  |  验证期'" not in divider
+    assert "show: false" in divider
+    assert "风险账户列表" not in books
+    assert "const riskAccounts" not in books
 
 
 def test_direction_panel_removes_symbol_heatmap_and_all_profit_counts_show_precision():
@@ -370,6 +418,22 @@ def test_direction_toolbar_removes_duplicate_search_button():
     assert "重新运行分向筛选" in panel
 
 
+def test_direction_toolbar_can_filter_abook_or_bbook_across_route_dependent_views():
+    panel = _source("components/DirectionPanel.vue")
+
+    assert "activeBook" in panel
+    assert "displayBooks" in panel
+    assert '<option value="abook">Abook</option>' in panel
+    assert '<option value="bbook">Bbook</option>' in panel
+    assert "account.book !== activeBook.value" in panel
+
+
+def test_direction_panel_does_not_expose_redundant_side_selector():
+    panel = _source("components/DirectionPanel.vue")
+
+    assert 'v-model="side"' not in panel
+
+
 def test_book_performance_renders_pnl_distribution_as_period_bars():
     books = _source("components/BookPerformance.vue")
     assert "distributionPanelCharts" in books
@@ -388,6 +452,17 @@ def test_book_performance_renders_separate_period_profit_distribution_bars_with_
     assert "stack: 'pnl-distribution'" not in books
 
 
+def test_book_performance_replaces_monthly_distribution_tables_with_two_grouped_book_charts():
+    books = _source("components/BookPerformance.vue")
+
+    assert "distributionDetailCharts" in books
+    assert "renderDistributionDetailCharts" in books
+    assert "stack: 'pnl-distribution'" not in books
+    assert "barGap: '10%'" in books
+    assert "全部盈利用户 P&amp;L 占比" in books
+    assert "全部亏损用户 P&amp;L 占比" in books
+
+
 def test_book_performance_renders_asset_market_pnl_bars_before_distribution_without_symbol_table():
     books = _source("components/BookPerformance.vue")
     assert "symbolPanelCharts" in books
@@ -398,7 +473,27 @@ def test_book_performance_renders_asset_market_pnl_bars_before_distribution_with
     assert "{{ bookLabel(book) }} 品种客户盈亏" in books
     assert "品种客户盈亏热力图（辅助）" not in books
     assert books.index("品种客户盈亏") < books.index("P&amp;L 用户分布（按月份/阶段）")
-    assert "<th>交易笔数</th>" not in books
+
+
+def test_pnl_distribution_uses_right_axis_for_neutral_user_counts():
+    books = _source("components/BookPerformance.vue")
+
+    assert "name: '有效用户数'" in books
+    assert "name: '中性/无效用户数'" in books
+    assert "name: '有效用户数'" in books and "yAxisIndex: 0" in books
+    assert "name: '中性/无效用户数'" in books and "yAxisIndex: 1" in books
+
+
+def test_pnl_distribution_cards_use_two_columns_per_row():
+    styles = _source("style.css")
+
+    assert ".distribution-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
+
+
+def test_dashboard_layout_keeps_overview_within_previous_content_width():
+    styles = _source("style.css")
+
+    assert ".layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 22px; max-width: 1600px;" in styles
 
 
 def test_book_performance_renders_company_profit_comparison_as_chart():
@@ -410,6 +505,18 @@ def test_book_performance_renders_company_profit_comparison_as_chart():
     assert "name: '分流后公司利润'" in books
     assert "name: '增量变化'" in books
     assert "v-for=\"row in analytics.routing_quality?.company_profit_comparison" not in books
+
+
+def test_all_cross_phase_time_charts_use_dynamic_selection_validation_divider():
+    books = _source("components/BookPerformance.vue")
+    direction = _source("components/DirectionPanel.vue")
+    app = _source("App.vue")
+    divider = _source("phaseDivider.ts")
+
+    assert "phaseDividerMarkLine" in divider
+    assert books.count("phaseDividerMarkLine") >= 4
+    assert direction.count("phaseDividerMarkLine") >= 1
+    assert ':request="directionRequest"' in app
 
 
 def test_frontend_account_lists_sort_and_drawer_hides_history_orders():

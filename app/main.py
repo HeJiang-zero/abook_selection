@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .analysis_cache import AnalysisSession, analysis_session_cache, request_signature
+from .analysis_cache import AnalysisSession, analysis_session_cache, direction_analytics_cache, request_signature
 from .martingale import build_martingale_filter, load_martingale_snapshot, snapshot_path
 from .avg_profit import build_avg_profit_filter
 from .book_analytics import build_book_analytics
@@ -20,13 +20,13 @@ from .personal_candidates import load_news_candidates, load_personal_candidates
 from .repository import ClickHouseRepository, RepositoryConfigurationError
 from .snapshot_refresh import refresh_snapshots
 from .risk import build_local_risk_filter
-from .r4 import build_r4_filter
 from .service import (
     build_account_detail_payload,
     build_analysis_payload,
     build_two_stage_payload,
     prepare_analysis_context,
 )
+from .account_detail import build_direction_summary
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -151,7 +151,6 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
         personal_candidate_logins = personal_candidates.login_ids if personal_candidates_enabled else frozenset()
         news_candidate_logins = news_candidates.login_ids if news_candidates_enabled else frozenset()
         risk_filter = build_local_risk_filter(request)
-        r4_snapshot = build_r4_filter(request)
         martingale_snapshot = build_martingale_filter(request)
         effective_request = risk_filter.apply(request)
         overview_rows = None
@@ -171,11 +170,9 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             excluded_logins = risk_filter.excluded_logins
             rows = repository.fetch_analysis(effective_request, excluded_logins=excluded_logins) if excluded_logins else repository.fetch_analysis(effective_request)
         rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(rows))
-        rows = r4_snapshot.enrich_rows(rows)
         rows = avg_profit_snapshot.enrich_rows(rows)
         if overview_rows is not None:
             overview_rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(overview_rows))
-            overview_rows = r4_snapshot.enrich_rows(overview_rows)
             overview_rows = avg_profit_snapshot.enrich_rows(overview_rows)
         # Risk SQL exclusions are an optimization for the Abook candidate query.
         # Final routing and company P&L must still classify the full population:
@@ -221,6 +218,8 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             min_selection_monthly_consistency=rules.min_selection_monthly_consistency,
             min_positive_month_rate=rules.min_positive_month_rate,
             max_top1_day_profit_contribution=rules.max_top1_day_profit_contribution,
+            min_long_trades_ratio=rules.min_long_trades_ratio,
+            max_long_trades_ratio=rules.max_long_trades_ratio,
             max_daily_profit_month_contribution=rules.max_daily_profit_month_contribution,
             max_leverage_p95_ratio=rules.max_leverage_p95_ratio,
             max_high_leverage_holding_seconds=rules.max_high_leverage_holding_seconds,
@@ -241,14 +240,8 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
             excluded_martingale_levels=request.rules.excluded_martingale_levels,
             avg_profit_snapshot_status=avg_profit_snapshot.status,
             require_selection_monthly_positive=rules.require_selection_monthly_positive,
-            enable_r4=rules.enable_r4,
-            r4_min_passing_weeks=rules.r4_min_passing_weeks,
         )
         payload["risk_management"] = risk_filter.summary()
-        payload["r4"] = {
-            **r4_snapshot.summary(),
-            "routed_users": sum(1 for account in payload.get("accounts", []) if account.get("r4_pass")),
-        }
         payload["martingale"] = martingale_snapshot.summary(request.rules.excluded_martingale_levels)
         payload["avg_profit"] = avg_profit_snapshot.summary()
         return _store_analysis_session(
@@ -268,14 +261,28 @@ def account_detail(
     platform: str,
     login: int,
     start: str = "2026-05-01",
-    end: str = "2026-07-16",
+    end: str = "2026-07-22",
     selection_start: str = "2026-05-01",
     selection_end: str = "2026-06-30",
+    validation_start: str = "2026-07-01",
+    validation_end: str = "2026-07-22",
     repository: ClickHouseRepository = Depends(get_repository),
 ) -> dict:
     try:
         rows = repository.fetch_account_detail(platform, login, start, end)
         payload = build_account_detail_payload(rows)
+        fetch_direction_summary = getattr(repository, "fetch_account_direction_summary", None)
+        direction_rows = fetch_direction_summary(
+            platform,
+            login,
+            start,
+            end,
+            selection_start,
+            selection_end,
+            validation_start,
+            validation_end,
+        ) if callable(fetch_direction_summary) else []
+        payload["direction_summary"] = build_direction_summary(direction_rows)
         snapshot = load_martingale_snapshot(snapshot_path(), selection_start, selection_end, [platform])
         payload["martingale"] = {
             **snapshot.summary(),
@@ -368,26 +375,32 @@ def direction_analytics(
     repository: ClickHouseRepository = Depends(get_repository),
 ) -> dict:
     try:
+        signature = request_signature(request.analysis)
+        cached_result = direction_analytics_cache.get(signature)
+        if cached_result is not None:
+            return cached_result
         cached_session = analysis_session_cache.get(
             request.analysis_token,
-            request_signature(request.analysis),
+            signature,
         )
         if cached_session is None:
             analysis_payload = analysis(request.analysis, repository)
             cached_session = analysis_session_cache.get(
                 analysis_payload.get("analysis_token"),
-                request_signature(request.analysis),
+                signature,
             )
             if cached_session is not None:
                 analysis_payload = cached_session.payload
         else:
             analysis_payload = cached_session.payload
         rows = repository.fetch_direction_matched_facts(request.analysis)
-        return build_direction_analytics_payload(
+        result = build_direction_analytics_payload(
             rows,
             analysis_payload.get("population_accounts") or analysis_payload.get("accounts", []),
             request.analysis,
         )
+        direction_analytics_cache.put(signature, result)
+        return result
     except RepositoryConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

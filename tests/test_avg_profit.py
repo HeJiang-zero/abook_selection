@@ -86,7 +86,7 @@ def test_avg_profit_threshold_does_not_gate_abook_routing():
             "min_negative_day": Decimal("-2"), "daily_pnl_sum_for_variance": Decimal("100"),
             "daily_pnl_square_sum": Decimal("1000"), "daily_variance_count": 10, "daily_abs_sum": Decimal("110"),
             "turnover": Decimal("0"), "avg_holding_seconds": Decimal("60"), "median_holding_seconds": Decimal("60"),
-            "long_trades": 15, "short_trades": 5, "symbols_traded": 1, "avg_profit": avg_profit,
+            "long_trades": 10, "short_trades": 10, "symbols_traded": 1, "avg_profit": avg_profit,
         }
 
     payload = build_two_stage_payload(

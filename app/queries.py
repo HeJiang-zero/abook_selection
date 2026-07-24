@@ -609,6 +609,67 @@ def build_account_detail_query(platform: str, login: int, start: str, end: str) 
     }
 
 
+def build_account_direction_summary_query(
+    platform: str,
+    login: int,
+    start: str,
+    end: str,
+    selection_start: str,
+    selection_end: str,
+    validation_start: str,
+    validation_end: str,
+) -> tuple[str, dict[str, Any]]:
+    """Return uncapped matched Long/Short aggregates for one account."""
+    if platform not in ALLOWED_PLATFORMS:
+        raise ValueError("unsupported platform")
+    query = f"""
+    WITH periods AS (
+        SELECT 'selection' AS phase,
+               toDate({{selection_start:Date}}) AS period_start,
+               toDate({{selection_end_exclusive:Date}}) AS period_end
+        UNION ALL
+        SELECT 'validation' AS phase,
+               toDate({{validation_start:Date}}) AS period_start,
+               toDate({{validation_end_exclusive:Date}}) AS period_end
+    )
+    SELECT
+        period.phase AS phase,
+        mt.direction AS direction,
+        count() AS matched_trades,
+        countIf(mt.profit > 0) AS winning_trades,
+        countIf(mt.profit < 0) AS losing_trades,
+        sum(toFloat64(mt.profit)) AS side_pnl,
+        sumIf(toFloat64(mt.profit), mt.profit > 0) AS gross_wins,
+        sumIf(toFloat64(mt.profit), mt.profit < 0) AS gross_losses
+    FROM risk.dwd_matched_trades AS mt FINAL
+    INNER JOIN {USER_SOURCE_SQL} AS u
+      ON mt.platform = u.platform AND mt.login = u.login
+    CROSS JOIN periods AS period
+    WHERE u.is_deleted = 0
+      AND positionCaseInsensitive(u.`group`, 'test') = 0
+      AND positionCaseInsensitive(u.`group`, 'demo') = 0
+      AND mt.platform = {{platform:String}}
+      AND mt.login = {{login:UInt64}}
+      AND mt.direction IN ('Long', 'Short')
+      AND mt.exit_time >= {{start:Date}}
+      AND mt.exit_time < {{end_exclusive:Date}}
+      AND mt.exit_time >= period.period_start
+      AND mt.exit_time < period.period_end
+    GROUP BY phase, direction
+    ORDER BY phase, direction
+    """
+    return query, {
+        "platform": platform,
+        "login": login,
+        "start": start,
+        "end_exclusive": _date_end_exclusive(end),
+        "selection_start": selection_start,
+        "selection_end_exclusive": _date_end_exclusive(selection_end),
+        "validation_start": validation_start,
+        "validation_end_exclusive": _date_end_exclusive(validation_end),
+    }
+
+
 def _book_key_predicate(account_keys: set[tuple[str, int]] | None) -> str:
     if not account_keys:
         return ""
