@@ -1,7 +1,13 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from app.matched_trades_local import write_matched_month
-from scripts.refresh_matched_trades_local import parse_args, run_refresh
+from scripts.refresh_matched_trades_local import (
+    _load_archived_deals,
+    _remote_reconcile,
+    _rebuild_initial_entries,
+    parse_args,
+    run_refresh,
+)
 
 
 def matched_row(exit_deal_id=12):
@@ -89,6 +95,16 @@ class _FakeClient:
 
     def query(self, query, parameters):
         self.queries.append(query)
+        if "FROM risk.dwd_matched_trades FINAL" in query:
+            return _QueryResult(
+                [
+                    "login", "platform", "symbol", "direction", "entry_time", "exit_time",
+                    "entry_price", "exit_price", "volume", "profit", "holding_seconds",
+                    "turnover", "entry_deal_id", "exit_deal_id",
+                ],
+                [[7, "mt5", "EURUSD", "Long", datetime(2026, 7, 25, 0), datetime(2026, 7, 26, 0),
+                  1.1, 1.2, 1.0, 0.1, 86400, 2.3, 11, 13]],
+            )
         if "dwd_match_trades_open" in query:
             return _QueryResult(
                 [
@@ -120,6 +136,80 @@ def test_parse_args_uses_confirmed_exclusive_window_and_platforms():
     assert args.start == date(2025, 7, 27)
     assert args.end == date(2026, 7, 27)
     assert args.platforms == ["hh_mt5", "mt4", "mt5"]
+
+
+def test_parse_args_accepts_recompute_from_cutoff():
+    args = parse_args(["--recompute-from", "2026-07-23T23:59:59"])
+
+    assert args.recompute_from == datetime(2026, 7, 23, 23, 59, 59)
+
+
+def test_load_archived_deals_reads_local_parquet_before_remote_fallback(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    target = tmp_path / "mt5_deals" / "month=2026-07" / "day=2026-07-25" / "part.parquet"
+    target.parent.mkdir(parents=True)
+    pq.write_table(pa.table({
+        "Login": pa.array([7], type=pa.uint64()),
+        "Platform": pa.array(["mt5"]),
+        "Symbol": pa.array(["EURUSD"]),
+        "Action": pa.array([1], type=pa.int32()),
+        "Entry": pa.array([0], type=pa.int32()),
+        "Time": pa.array([datetime(2026, 7, 25, tzinfo=timezone.utc)], type=pa.timestamp("ms", tz="UTC")),
+        "Deal": pa.array([13], type=pa.uint64()),
+        "PositionID": pa.array([101], type=pa.uint64()),
+        "Volume": pa.array([1.0]),
+        "Price": pa.array([1.2]),
+        "RateProfit": pa.array([1.0]),
+        "ContractSize": pa.array([100000.0]),
+        "IsDeleted": pa.array([0], type=pa.uint8()),
+    }), target)
+
+    rows = _load_archived_deals(
+        tmp_path / "mt5_deals", datetime(2026, 7, 24), datetime(2026, 7, 27)
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["Deal"] == 13
+
+
+def test_rebuild_initial_entries_uses_original_volume_minus_historical_matches():
+    rows = [{
+        "platform": "hh_mt5",
+        "login": 7,
+        "symbol": "BTCUSD",
+        "direction": "SHORT",
+        "position_id": 100,
+        "entry_deal_id": 11,
+        "open_time": datetime(2026, 7, 20),
+        "open_price": 65000.0,
+        "original_volume": 1.0,
+        "remaining_volume": 1.0,
+    }]
+
+    entries = _rebuild_initial_entries(rows, {
+        ("hh_mt5", 7, "BTCUSD", 11): 0.4,
+    })
+
+    assert len(entries) == 1
+    assert entries[0]["remaining"] == 0.6
+
+
+def test_remote_reconcile_replaces_only_the_requested_local_interval(tmp_path):
+    warehouse = tmp_path / "warehouse"
+    output = warehouse / "dwd_matched_trades" / "month=2026-07" / "part.parquet"
+    write_matched_month(output, [
+        matched_row(12),
+        dict(matched_row(13), exit_time=datetime(2026, 7, 26), profit=999.0),
+    ])
+    client = _FakeClient()
+
+    remote_rows, merged_rows, month = _remote_reconcile(
+        warehouse, client, datetime(2026, 7, 25), datetime(2026, 7, 27)
+    )
+
+    assert (remote_rows, merged_rows, month) == (1, 2, "2026-07")
 
 
 def test_dry_run_never_touches_remote_or_local(tmp_path):

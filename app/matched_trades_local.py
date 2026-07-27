@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import re
 from datetime import timezone
-from typing import Any, Iterable, List, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 from uuid import uuid4
 
 from .matched_trades_fifo import matched_trade_key
@@ -111,6 +111,34 @@ def open_entries_query(cutoff: datetime) -> Tuple[str, dict[str, Any]]:
     return query, {"cutoff": _format_datetime(cutoff)}
 
 
+def matched_trades_query(
+    start: datetime, end: datetime
+) -> Tuple[str, dict[str, Any]]:
+    query = """
+    SELECT
+        toUInt64(login) AS login,
+        toString(platform) AS platform,
+        toString(symbol) AS symbol,
+        toString(direction) AS direction,
+        entry_time,
+        exit_time,
+        entry_price,
+        exit_price,
+        volume,
+        profit,
+        holding_seconds,
+        turnover,
+        toUInt64(entry_deal_id) AS entry_deal_id,
+        toUInt64(exit_deal_id) AS exit_deal_id
+    FROM risk.dwd_matched_trades FINAL
+    WHERE exit_time >= {start:DateTime}
+      AND exit_time < {end:DateTime}
+    ORDER BY exit_time, platform, login, symbol, entry_deal_id, exit_deal_id
+    """
+    _assert_read_only(query)
+    return query, {"start": _format_datetime(start), "end": _format_datetime(end)}
+
+
 def write_query_stream(client: Any, query: str, params: dict[str, Any], target: Path) -> int:
     _assert_read_only(query)
     try:
@@ -144,6 +172,28 @@ def write_query_stream(client: Any, query: str, params: dict[str, Any], target: 
         if writer is not None:
             writer.close()
         temporary.unlink(missing_ok=True)
+
+
+def write_query_stream_with_retry(
+    client: Any,
+    query: str,
+    params: dict[str, Any],
+    target: Path,
+    *,
+    retries: int = 3,
+    client_factory: Optional[Callable[[], Any]] = None,
+) -> int:
+    if retries < 1:
+        raise ValueError("retries must be at least 1")
+    last_error: Optional[Exception] = None
+    for attempt in range(retries):
+        current_client = client if attempt == 0 or client_factory is None else client_factory()
+        try:
+            return write_query_stream(current_client, query, params, target)
+        except Exception as exc:
+            last_error = exc
+    assert last_error is not None
+    raise last_error
 
 
 def partition_month(value: datetime | date | str) -> str:

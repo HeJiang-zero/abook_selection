@@ -50,9 +50,10 @@
 
 ### 本地文件边界
 
-- 原始输入：`data/matched_trades_inputs/mt5_deals/month=YYYY-MM/part.parquet`、`mt4_trades_split/month=YYYY-MM/part.parquet`，以及 `manifest.json`。
+- 原始输入：`data/matched_trades_inputs/mt5_deals/month=YYYY-MM/part.parquet` 或可恢复的 `month=YYYY-MM/day=YYYY-MM-DD/part.parquet`，MT4 split deals 同理，以及 `manifest.json`。
 - 业务输出：只写 `data/warehouse/dwd_matched_trades/month=YYYY-MM/part.parquet` 的受影响月份。
 - 所有替换使用临时文件 + `os.replace`；失败时不发布半成品 manifest。
+- 远程下载按天分片；已完成的月文件或日文件会跳过，单个分片失败最多重试 3 次，避免长连接中断导致整段重下。
 
 ## 正确性与异常处理
 
@@ -67,3 +68,4 @@
 - 单元测试覆盖：多空 FIFO、部分平仓、反向开仓、同一时间 deal ID 排序、冷启动 entry、幂等去重和原子文件写入。
 - 使用临时 Warehouse 做端到端测试，验证既有月份不变、受影响月份可重复运行且行数不增长。
 - 实际运行后只读查询远端 `dwd_matched_trades FINAL`，以行数、唯一键集合、profit/turnover 合计和最大 exit 时间对账；对账差异只报告，不向远端写回。
+- 如果历史 open 状态无法完整还原，支持显式只读 reconcile：用远端 `dwd_matched_trades FINAL` 替换指定缺口区间的本地结果；该模式仍不会向 ClickHouse 写入。

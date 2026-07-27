@@ -66,7 +66,7 @@ Dashboard 默认使用 `ABOOK_DATA_SOURCE=local`，修改验证期后点击“�
 
 ## 本地 matched_trades 补数
 
-`scripts/refresh_matched_trades_local.py` 会从 ClickHouse 只读下载近一年 MT5 deals、MT4 split deals，并使用 FIFO 逻辑补齐本地 `dwd_matched_trades` 的缺口。原始输入保存到 `data/matched_trades_inputs/`，业务结果只写入本地 Warehouse；命令不会向 ClickHouse 执行 INSERT。
+`scripts/refresh_matched_trades_local.py` 会从 ClickHouse 只读下载近一年 MT5 deals、MT4 split deals，并使用 FIFO 逻辑补齐本地 `dwd_matched_trades` 的缺口。原始输入保存到 `data/matched_trades_inputs/`，大月份按日分片且支持断点续传，业务结果只写入本地 Warehouse；命令不会向 ClickHouse 执行 INSERT。
 
 默认窗口是 `[2025-07-27, 2026-07-27)`，也可以显式指定排他结束日期：
 
@@ -82,3 +82,14 @@ Dashboard 默认使用 `ABOOK_DATA_SOURCE=local`，修改验证期后点击“�
 ```
 
 先运行 `--dry-run` 可以查看本地 frontier、输入目录和 Warehouse 目录，不连接远端。正式运行输出 JSON 中的 `remote_write_attempts` 必须为 `0`；重复运行时 `added_rows` 应为 `0`，表示本地合并是幂等的。
+
+如果需要修复冷启动队列无法还原的历史缺口，可增加只读 reconcile 区间。该步骤只读取远端 `dwd_matched_trades FINAL`，并替换本地指定日期之后的分区内容：
+
+```bash
+.venv/bin/python scripts/refresh_matched_trades_local.py \
+  --start 2025-07-27 \
+  --end 2026-07-27 \
+  --recompute-from 2026-07-23T23:59:59 \
+  --remote-reconcile \
+  --reconcile-start 2026-07-24T00:00:00
+```

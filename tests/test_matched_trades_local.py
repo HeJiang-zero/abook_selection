@@ -7,12 +7,14 @@ from app.matched_trades_local import (
     load_local_matched_month,
     merge_matched_rows,
     mt4_deals_query,
+    matched_trades_query,
     mt5_deals_query,
     open_entries_query,
     partition_month,
     update_matched_manifest,
     write_matched_month,
     write_query_stream,
+    write_query_stream_with_retry,
 )
 
 
@@ -51,6 +53,15 @@ def test_open_entries_query_is_as_of_and_read_only():
     assert "snapshot_at <=" in query
     assert not any(re.search(rf"\b{keyword}\b", query.upper()) for keyword in ("INSERT", "ALTER", "DELETE", "OPTIMIZE"))
     assert params["cutoff"] == "2026-07-25 00:00:00"
+
+
+def test_matched_trades_query_is_read_only_and_has_local_projection_fields():
+    query, params = matched_trades_query(datetime(2026, 7, 24), datetime(2026, 7, 27))
+
+    assert "FROM risk.dwd_matched_trades FINAL" in query
+    assert "entry_deal_id" in query and "exit_deal_id" in query and "turnover" in query
+    assert not any(re.search(rf"\b{keyword}\b", query.upper()) for keyword in ("INSERT", "ALTER", "DELETE", "OPTIMIZE"))
+    assert params["start"] == "2026-07-24 00:00:00"
 
 
 def test_partition_month_accepts_datetime_and_iso_strings():
@@ -113,6 +124,30 @@ def test_write_query_stream_does_not_publish_after_stream_failure(tmp_path):
 
     assert not target.exists()
     assert not list(target.parent.glob("*.tmp"))
+
+
+class _FlakyClient(_Client):
+    def __init__(self, batches):
+        super().__init__(batches)
+        self.calls = 0
+
+    def query_arrow_stream(self, query, parameters):
+        self.calls += 1
+        if self.calls == 1:
+            raise ConnectionError("incomplete read")
+        return super().query_arrow_stream(query, parameters)
+
+
+def test_write_query_stream_with_retry_retries_a_broken_connection(tmp_path):
+    import pyarrow as pa
+
+    target = tmp_path / "month=2026-07" / "part.parquet"
+    batch = pa.RecordBatch.from_arrays([pa.array([1])], ["login"])
+    client = _FlakyClient([batch])
+
+    assert write_query_stream_with_retry(client, "SELECT 1", {}, target, retries=2) == 1
+    assert client.calls == 2
+    assert target.exists()
 
 
 def matched_row(exit_deal_id, *, exit_time="2026-07-25T00:00:00"):
