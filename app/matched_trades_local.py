@@ -324,7 +324,13 @@ def write_matched_month(path: Path, rows: Iterable[dict[str, Any]]) -> int:
 
 
 def update_matched_manifest(
-    manifest: dict[str, Any], month_rows: dict[str, int], updated_at: str
+    manifest: dict[str, Any],
+    month_rows: dict[str, int],
+    updated_at: str,
+    *,
+    coverage_start: Optional[date] = None,
+    coverage_end: Optional[date] = None,
+    platforms: Optional[Iterable[str]] = None,
 ) -> dict[str, Any]:
     updated = deepcopy(manifest)
     payload = updated.setdefault("tables", {}).setdefault(
@@ -333,7 +339,26 @@ def update_matched_manifest(
     monthly_rows = dict(payload.get("monthly_rows", {}))
     monthly_rows.update({month: int(rows) for month, rows in month_rows.items()})
     payload["monthly_rows"] = dict(sorted(monthly_rows.items()))
+    payload["months"] = sorted(monthly_rows)
     payload["rows"] = sum(monthly_rows.values())
+    if coverage_start is not None and coverage_end is not None:
+        if coverage_end < coverage_start:
+            raise ValueError("coverage_end must not be before coverage_start")
+        coverage = payload.setdefault("coverage", {})
+        for platform in platforms or ("mt4", "mt5", "hh_mt5"):
+            intervals = list(coverage.get(platform, []))
+            intervals.append({
+                "start": coverage_start.isoformat(),
+                "end": coverage_end.isoformat(),
+            })
+            bounds = [
+                (date.fromisoformat(item["start"]), date.fromisoformat(item["end"]))
+                for item in intervals
+            ]
+            coverage[platform] = [{
+                "start": min(start for start, _ in bounds).isoformat(),
+                "end": max(end for _, end in bounds).isoformat(),
+            }]
     updated["updated_at"] = updated_at
     updated["generation"] = f"local-matched-{uuid4().hex[:8]}"
     return updated

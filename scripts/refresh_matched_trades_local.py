@@ -412,7 +412,14 @@ def run_refresh(args: argparse.Namespace, client: Any = None) -> dict[str, Any]:
     if month_rows:
         manifest_path = args.warehouse_path / "manifest.json"
         manifest = load_manifest(manifest_path)
-        updated = update_matched_manifest(manifest, month_rows, datetime.now().astimezone().isoformat())
+        updated = update_matched_manifest(
+            manifest,
+            month_rows,
+            datetime.now().astimezone().isoformat(),
+            coverage_start=args.start,
+            coverage_end=args.end - timedelta(days=1),
+            platforms=args.platforms,
+        )
         publish_manifest(manifest_path, updated)
     _publish_input_manifest(args, archive_stats, cutoff, bootstrap_rows)
     result.update({

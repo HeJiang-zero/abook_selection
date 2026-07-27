@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 import re
 
 import pytest
@@ -212,3 +212,31 @@ def test_update_matched_manifest_changes_only_matched_trade_counts():
     assert updated["tables"]["dwd_matched_trades"]["monthly_rows"] == {"2026-06": 11, "2026-07": 2}
     assert updated["tables"]["ods_mt5_deals"] == {"rows": 99}
     assert updated["generation"] != "old"
+
+
+def test_update_matched_manifest_extends_coverage():
+    manifest = {
+        "schema_version": 1,
+        "tables": {
+            "dwd_matched_trades": {
+                "monthly_rows": {"2026-05": 11},
+                "rows": 11,
+                "coverage": {
+                    "mt4": [{"start": "2026-02-01", "end": "2026-07-31"}],
+                },
+            },
+        },
+    }
+
+    updated = update_matched_manifest(
+        manifest,
+        {"2025-08": 4},
+        "now",
+        coverage_start=date(2025, 7, 27),
+        coverage_end=date(2026, 5, 31),
+        platforms=["mt4"],
+    )
+
+    assert updated["tables"]["dwd_matched_trades"]["coverage"]["mt4"] == [
+        {"start": "2025-07-27", "end": "2026-07-31"}
+    ]
