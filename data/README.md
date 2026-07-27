@@ -63,3 +63,22 @@ Dashboard 默认使用 `ABOOK_DATA_SOURCE=local`，修改验证期后点击“�
 - 空结果月份也会写入并登记覆盖，表示该月份已从远程查询确认无数据，而不是未同步。
 
 不要手工编辑 Parquet 或 manifest。需要修复历史数据时，使用 `--reconcile-month`，这样文件和覆盖元数据会一起更新。
+
+## 本地 matched_trades 补数
+
+`scripts/refresh_matched_trades_local.py` 会从 ClickHouse 只读下载近一年 MT5 deals、MT4 split deals，并使用 FIFO 逻辑补齐本地 `dwd_matched_trades` 的缺口。原始输入保存到 `data/matched_trades_inputs/`，业务结果只写入本地 Warehouse；命令不会向 ClickHouse 执行 INSERT。
+
+默认窗口是 `[2025-07-27, 2026-07-27)`，也可以显式指定排他结束日期：
+
+```bash
+.venv/bin/python scripts/refresh_matched_trades_local.py \
+  --start 2025-07-27 \
+  --end 2026-07-27 \
+  --dry-run
+
+.venv/bin/python scripts/refresh_matched_trades_local.py \
+  --start 2025-07-27 \
+  --end 2026-07-27
+```
+
+先运行 `--dry-run` 可以查看本地 frontier、输入目录和 Warehouse 目录，不连接远端。正式运行输出 JSON 中的 `remote_write_attempts` 必须为 `0`；重复运行时 `added_rows` 应为 `0`，表示本地合并是幂等的。
