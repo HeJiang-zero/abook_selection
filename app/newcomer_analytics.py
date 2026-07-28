@@ -115,6 +115,11 @@ def _candidate_eval_days(
         day = _date_value(row["trade_date"])
         if active_days > max_active_days:
             break
+        # Once cumulative trades reach the bar, every subsequent active day is a
+        # candidate as-of (the account keeps being re-evaluated). The elif below
+        # also admits the max_active_days-th day when the bar still isn't met,
+        # so that day gets a quality check and the account lands in left_track
+        # rather than silently staying in observe forever.
         if cumulative_trades >= min_trades:
             candidates.append(day)
         elif active_days == max_active_days:
@@ -147,9 +152,13 @@ def _quality_pass(
     *,
     rules: Any,
     leverage_selection: dict[str, Any],
+    min_trades_override: int | None = None,
 ) -> tuple[bool, list[str]]:
     flags: list[str] = []
-    if metrics["trade_count"] < rules.min_trades:
+    effective_min_trades = (
+        int(min_trades_override) if min_trades_override is not None else int(rules.min_trades)
+    )
+    if metrics["trade_count"] < effective_min_trades:
         flags.append("insufficient_sample")
     if metrics.get("profit_factor") is not None and metrics["profit_factor"] <= rules.min_profit_factor:
         flags.append("profit_factor")
@@ -194,9 +203,12 @@ def _result(
     validation_period_pnl: float,
     stats_end: date,
     min_trades: int,
+    max_active_days: int,
     window_trade_count: int = 0,
 ) -> dict[str, Any]:
     platform, login = _key(account)
+    trade_count = _int(metrics.get("trade_count"))
+    active_days = _int(metrics.get("active_trade_days"))
     return {
         "platform": platform,
         "login": login,
@@ -207,7 +219,7 @@ def _result(
         "admitted": admitted,
         "admitted_on": as_of.isoformat() if admitted and as_of is not None else None,
         "as_of": as_of.isoformat() if as_of is not None else None,
-        "active_trade_days": metrics.get("active_trade_days", 0),
+        "active_trade_days": active_days,
         "window_trade_count": window_trade_count,
         "selection": metrics,
         "selection_flags": flags,
@@ -215,6 +227,9 @@ def _result(
         "validation_period_pnl": validation_period_pnl,
         "stats_end": stats_end.isoformat(),
         "min_trades_used": min_trades,
+        # Maturity progress: how far this account is from clearing the bar.
+        "trades_to_mature": max(0, min_trades - trade_count),
+        "days_to_cap": max(0, max_active_days - active_days),
     }
 
 
@@ -251,6 +266,7 @@ def evaluate_newcomer_account(
             validation_period_pnl=validation_period_pnl,
             stats_end=end,
             min_trades=min_trades,
+            max_active_days=max_active_days,
             window_trade_count=0,
         )
 
@@ -260,6 +276,13 @@ def evaluate_newcomer_account(
         )
         as_of = as_of_candidates[0] if as_of_candidates else None
         metrics = _aggregate_through(days, as_of=as_of)
+        # Martingale-blocked accounts are never admitted, but their post-asof
+        # P&L is still a meaningful risk signal — keep it instead of zeroing.
+        post_pnl = (
+            _sum_pnl(days, start_inclusive=None, end_inclusive=end, start_exclusive=as_of)
+            if as_of is not None
+            else 0.0
+        )
         return _result(
             account,
             pool="blocked",
@@ -267,10 +290,11 @@ def evaluate_newcomer_account(
             as_of=as_of,
             metrics=metrics,
             flags=["martingale_hard_block"],
-            post_asof_pnl=0.0,
+            post_asof_pnl=post_pnl,
             validation_period_pnl=validation_period_pnl,
             stats_end=end,
             min_trades=min_trades,
+            max_active_days=max_active_days,
             window_trade_count=total_trades,
         )
 
@@ -289,6 +313,7 @@ def evaluate_newcomer_account(
             validation_period_pnl=validation_period_pnl,
             stats_end=end,
             min_trades=min_trades,
+            max_active_days=max_active_days,
             window_trade_count=total_trades,
         )
 
@@ -300,16 +325,12 @@ def evaluate_newcomer_account(
         metrics = _aggregate_through(days, as_of=as_of)
         last_metrics = metrics
         last_as_of = as_of
-        check_rules = rules
-        if min_trades_override is not None:
-            class _RulesProxy:
-                def __getattr__(self, name: str) -> Any:
-                    if name == "min_trades":
-                        return min_trades
-                    return getattr(rules, name)
-
-            check_rules = _RulesProxy()
-        passed, flags = _quality_pass(metrics, rules=check_rules, leverage_selection=leverage_selection)
+        passed, flags = _quality_pass(
+            metrics,
+            rules=rules,
+            leverage_selection=leverage_selection,
+            min_trades_override=min_trades_override,
+        )
         last_flags = flags
         if passed:
             post_pnl = _sum_pnl(days, start_inclusive=None, end_inclusive=end, start_exclusive=as_of)
@@ -324,6 +345,7 @@ def evaluate_newcomer_account(
                 validation_period_pnl=validation_period_pnl,
                 stats_end=end,
                 min_trades=min_trades,
+                max_active_days=max_active_days,
                 window_trade_count=total_trades,
             )
 
@@ -343,6 +365,7 @@ def evaluate_newcomer_account(
             validation_period_pnl=validation_period_pnl,
             stats_end=end,
             min_trades=min_trades,
+            max_active_days=max_active_days,
             window_trade_count=total_trades,
         )
     return _result(
@@ -356,6 +379,7 @@ def evaluate_newcomer_account(
         validation_period_pnl=validation_period_pnl,
         stats_end=end,
         min_trades=min_trades,
+        max_active_days=max_active_days,
         window_trade_count=total_trades,
     )
 
@@ -395,7 +419,7 @@ def _cohort_summary(accounts: list[dict[str, Any]], pnl_field: str) -> dict[str,
         "winning_trades": wins,
         "losing_trades": losses_trades,
         "win_rate": round(wins / trades, 6) if trades else 0.0,
-        "profit_factor": round(gross_wins / abs(gross_losses), 6) if gross_losses else None,
+        "profit_factor": _profit_factor(gross_wins, gross_losses),
         "profit_concentration": _concentration(values),
     }
 
@@ -573,12 +597,13 @@ def build_newcomer_analytics_payload(
             rejected.append(result)
 
     admitted.sort(key=lambda item: item["post_asof_pnl"], reverse=True)
+    # Observe = immature accounts. Most useful order: closest to maturity first
+    # (fewest trades still needed, then fewest days left before the active-day cap).
     observe.sort(
         key=lambda item: (
-            _int((item.get("selection") or {}).get("trade_count")),
-            item["validation_period_pnl"],
+            _int(item.get("trades_to_mature")),
+            -_int(item.get("days_to_cap")),
         ),
-        reverse=True,
     )
     rejected.sort(key=lambda item: item.get("selection", {}).get("trade_count", 0), reverse=True)
 
@@ -590,6 +615,12 @@ def build_newcomer_analytics_payload(
     post_asof_summary = _cohort_summary(admitted, "post_asof_pnl")
     validation_summary = _cohort_summary(admitted, "validation_period_pnl")
     observe_summary = _cohort_summary(observe, "validation_period_pnl")
+    as_of_distribution = _as_of_distribution(admitted)
+
+    observe_cap = 500
+    rejected_cap = 500
+    observe_truncated = len(observe) > observe_cap
+    rejected_truncated = len(rejected) > rejected_cap
 
     return {
         "pnl_basis": "deals.client_net_pnl",
@@ -610,6 +641,14 @@ def build_newcomer_analytics_payload(
             "skipped_abook": skipped_abook,
             "skipped_inactive": skipped_inactive,
             "active_candidates": len(admitted) + len(observe) + len(rejected),
+            # rejected + left_track + blocked — the full "did not make it" bucket.
+            "unqualified_total": len(rejected),
+        },
+        "truncation": {
+            "observe_cap": observe_cap,
+            "observe_truncated": observe_truncated,
+            "rejected_cap": rejected_cap,
+            "rejected_truncated": rejected_truncated,
         },
         "kpi": {
             "admitted_accounts": len(admitted),
@@ -640,14 +679,15 @@ def build_newcomer_analytics_payload(
                 end=validation_end,
             ),
         },
+        "as_of_distribution": as_of_distribution,
         "top_accounts": {
             "post_asof": _top_accounts(admitted, "post_asof_pnl"),
             "validation": _top_accounts(admitted, "validation_period_pnl"),
             "observe_validation": _top_accounts(observe, "validation_period_pnl"),
         },
         "admitted": admitted,
-        "observe": observe[:500],
-        "rejected": rejected[:500],
+        "observe": observe[:observe_cap],
+        "rejected": rejected[:rejected_cap],
         "rules": {
             "max_active_days": max_active_days,
             "require_window_trades": True,
@@ -663,6 +703,22 @@ def build_newcomer_analytics_payload(
             "excluded_martingale_levels": list(rules.excluded_martingale_levels),
         },
     }
+
+
+def _as_of_distribution(admitted: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Histogram of how many accounts matured (admitted) on each as-of date."""
+    counts: dict[str, int] = defaultdict(int)
+    for item in admitted:
+        as_of = item.get("as_of")
+        if not as_of:
+            continue
+        counts[str(as_of)[:10]] += 1
+    if not counts:
+        return []
+    return [
+        {"date": day, "accounts": count}
+        for day, count in sorted(counts.items())
+    ]
 
 
 def build_newcomer_account_sensitivity(
@@ -689,6 +745,8 @@ def build_newcomer_account_sensitivity(
                 stats_end=stats_end,
             )
         )
+    # Stable ascending order so the UI reads as a sensitivity sweep.
+    points.sort(key=lambda point: int(point.get("min_trades_used") or 0))
     return {
         "platform": account.get("platform"),
         "login": account.get("login"),

@@ -12,7 +12,13 @@ from scripts.build_martingale_snapshot import build_snapshot as martingale_build
 from scripts.build_user_risk_snapshot import build_snapshot as risk_build_snapshot
 
 from .avg_profit import snapshot_path as avg_profit_snapshot_path
-from .analysis_cache import analysis_session_cache, direction_analytics_cache, newcomer_analytics_cache
+from .analysis_cache import (
+    analysis_session_cache,
+    analysis_result_cache,
+    direction_analytics_cache,
+    newcomer_analytics_cache,
+    newcomer_account_cache,
+)
 from .martingale import snapshot_path as martingale_snapshot_path
 from .risk import snapshot_path as risk_snapshot_path
 
@@ -230,8 +236,10 @@ def refresh_snapshots(
                 os.replace(staged[name], path)
 
             analysis_session_cache.clear()
+            analysis_result_cache.clear()
             direction_analytics_cache.clear()
             newcomer_analytics_cache.clear()
+            newcomer_account_cache.clear()
 
             return {
                 "status": "ready",

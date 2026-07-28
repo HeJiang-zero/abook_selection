@@ -951,22 +951,15 @@ def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     bbook_profitable = []
     for account in accounts:
         validation_pnl = float(account.get("validation", {}).get("client_net_pnl", account.get("validation_client_net_pnl", 0.0)))
-        june_pnl = next(
-            (
-                float(month.get("client_net_pnl", 0.0) or 0.0)
-                for month in account.get("monthly", [])
-                if str(month.get("month")) == "2026-06"
-            ),
-            0.0,
-        )
-        may_pnl = next(
-            (
-                float(month.get("client_net_pnl", 0.0) or 0.0)
-                for month in account.get("monthly", [])
-                if str(month.get("month")) == "2026-05"
-            ),
-            0.0,
-        )
+        monthly_pnls: dict[str, float] = {}
+        for month in account.get("monthly", []) or []:
+            key = str(month.get("month") or "")[:7]
+            if not key:
+                continue
+            monthly_pnls[key] = float(month.get("client_net_pnl", 0.0) or 0.0)
+        # Keep may/june aliases for older clients while the UI migrates to monthly_pnls.
+        may_pnl = monthly_pnls.get("2026-05", 0.0)
+        june_pnl = monthly_pnls.get("2026-06", 0.0)
         item = {
             "platform": account["platform"],
             "login": int(account["login"]),
@@ -974,6 +967,7 @@ def build_misjudge_summary(accounts: list[dict[str, Any]]) -> dict[str, Any]:
             "selection_client_net_pnl": float(account.get("selection", {}).get("client_net_pnl", account.get("selection_client_net_pnl", 0.0))),
             "may_client_net_pnl": may_pnl,
             "june_client_net_pnl": june_pnl,
+            "monthly_pnls": monthly_pnls,
             "validation_client_net_pnl": validation_pnl,
             "selection_source": account.get("selection_source", ""),
             "selection_flags": list(account.get("selection_flags", [])),
@@ -1123,10 +1117,32 @@ def _book_split_summary(accounts: list[dict[str, Any]], *, abook: bool) -> dict[
 
 def _book_performance(accounts: list[dict[str, Any]], phase: str, book: str) -> dict[str, Any]:
     values = [_finite_decimal(account[phase].get("client_net_pnl")) for account in accounts]
+    # Account-level phase P&L is the correct net total, but it can hide an
+    # intra-phase loss when one month is negative and another is positive.
+    # Decompose gross positive/negative amounts by the monthly rows, matching
+    # the user-structure analytics, so the overview does not report a false
+    # zero loss amount.
+    amount_values: list[Decimal] = []
+    for account in accounts:
+        monthly = account.get("monthly")
+        phase_monthly = (
+            [
+                _finite_decimal(item.get("client_net_pnl"))
+                for item in monthly
+                if isinstance(item, dict) and item.get("phase") == phase
+            ]
+            if isinstance(monthly, list)
+            else []
+        )
+        amount_values.extend(phase_monthly or [
+            _finite_decimal(account[phase].get("client_net_pnl"))
+        ])
     neutral = NEUTRAL_BAND_USD
     profitable = [value for value in values if value > neutral]
     losses = [value for value in values if value < -neutral]
     neutral_values = [value for value in values if -neutral <= value <= neutral]
+    positive_pnl = sum((value for value in amount_values if value > ZERO), ZERO)
+    negative_pnl = sum((value for value in amount_values if value < ZERO), ZERO)
     net_pnl = sum(values, ZERO)
     current_bbook_profit = -net_pnl
     assumed_abook_profit = ZERO
@@ -1140,6 +1156,8 @@ def _book_performance(accounts: list[dict[str, Any]], phase: str, book: str) -> 
         "loss_account_rate": _safe_ratio(Decimal(len(losses)), Decimal(len(values))),
         "gross_profit": float(sum((_finite_decimal(account[phase].get("gross_wins")) for account in accounts), ZERO)),
         "gross_loss": float(sum((_finite_decimal(account[phase].get("gross_losses")) for account in accounts), ZERO)),
+        "positive_pnl": float(positive_pnl),
+        "negative_pnl": float(negative_pnl),
         "net_pnl": float(net_pnl),
         "customer_net_pnl": float(net_pnl),
         "current_bbook_profit": float(current_bbook_profit),
@@ -1384,7 +1402,11 @@ def build_two_stage_payload(
         )
         martingale_status = getattr(martingale_snapshot, "status", "") if martingale_snapshot is not None else ""
         missing_platforms = set(getattr(martingale_snapshot, "missing_platforms", ())) if martingale_snapshot is not None else set()
-        snapshot_unavailable = martingale_status in {"missing", "invalid", "stale"} or (
+        # A stale snapshot is reported to the caller but must not turn the
+        # interactive overview into an all-Bbook result.  Only an absent or
+        # unreadable snapshot is a hard safety block; stale data is simply not
+        # applied until the user explicitly rebuilds it.
+        snapshot_unavailable = martingale_status in {"missing", "invalid"} or (
             martingale_status == "partial" and str(identity["platform"]) in missing_platforms
         )
         martingale_hard_block = (

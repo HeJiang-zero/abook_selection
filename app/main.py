@@ -12,9 +12,12 @@ from fastapi.staticfiles import StaticFiles
 
 from .analysis_cache import (
     AnalysisSession,
+    analysis_query_lock,
+    analysis_result_cache,
     analysis_session_cache,
     direction_analytics_cache,
     newcomer_analytics_cache,
+    newcomer_account_cache,
     request_signature,
 )
 from .martingale import build_martingale_filter, load_martingale_snapshot, snapshot_path
@@ -36,7 +39,7 @@ from .config import get_settings
 from .repository import ClickHouseRepository, LocalWarehouseRepository, RepositoryConfigurationError
 from .risk import build_local_risk_filter
 from .risk import snapshot_path as risk_snapshot_path
-from .snapshot_refresh import ensure_local_snapshots_for_request
+from .snapshot_refresh import ensure_local_snapshots_for_request, snapshot_status_for_request
 from .warehouse import WarehouseCoverageError, WarehouseError, load_manifest
 from .service import (
     build_account_detail_payload,
@@ -99,23 +102,73 @@ def _compact_population_account(account: dict) -> dict:
 
     The full account objects stay in the server-side analysis session for the
     lazy Book analytics endpoint.  Omitting diagnostic snapshot records from
-    the initial response avoids serializing the same large objects twice.
+    the initial response avoids serializing the same large objects twice. Keep
+    only the phase fields used by the overview cards; the full metrics remain
+    available in the server-side session and the non-zero-P&L account list.
     """
-    response_fields = (
-        "platform",
-        "login",
-        "account_group",
-        "book",
-        "selection_source",
-        "selection",
-        "validation",
-        "monthly",
-        "stability",
-        "risk_leverage_p95_ratio",
-        "martingale_blocked",
-        "martingale_risk_level",
+    phase_fields = (
+        "client_net_pnl",
+        "trade_count",
+        "winning_trades",
+        "win_rate",
+        "profit_factor",
+        "payoff_ratio",
     )
-    return {key: account[key] for key in response_fields if key in account}
+
+    def compact_phase(phase: Any) -> dict[str, Any]:
+        if not isinstance(phase, dict):
+            return {}
+        return {key: phase[key] for key in phase_fields if key in phase}
+
+    monthly = account.get("monthly")
+    compact_monthly = []
+    if isinstance(monthly, list):
+        compact_monthly = [
+            {
+                key: item[key]
+                for key in ("month", "phase", "client_net_pnl")
+                if key in item
+            }
+            for item in monthly
+            if isinstance(item, dict)
+        ]
+    stability = account.get("stability")
+    compact_stability = (
+        {key: stability[key] for key in ("score", "tier") if key in stability}
+        if isinstance(stability, dict)
+        else {}
+    )
+    return {
+        key: account[key]
+        for key in (
+            "platform",
+            "login",
+            "account_group",
+            "book",
+            "selection_source",
+            "selection_client_net_pnl",
+            "validation_client_net_pnl",
+            "july_new_user",
+            "confidence_tier",
+            "martingale_blocked",
+            "martingale_hard_block",
+            "martingale_risk_level",
+            "martingale_detection_status",
+            "confirmed_windows",
+            "confirmed_extreme_windows",
+            "expanded_windows",
+            "martingale_layer_hits",
+            "risk_leverage_p95_ratio",
+            "risk_turnover_leverage_p95_ratio",
+            "risk_concurrent_leverage_p95_ratio",
+        )
+        if key in account
+    } | {
+        "selection": compact_phase(account.get("selection")),
+        "validation": compact_phase(account.get("validation")),
+        "monthly": compact_monthly,
+        "stability": compact_stability,
+    }
 
 
 def _store_analysis_session(
@@ -125,6 +178,8 @@ def _store_analysis_session(
     daily_rows: list[dict] | None,
     overview_daily_rows: list[dict] | None,
 ) -> dict:
+    snapshot_refresh = payload.get("snapshot_refresh")
+    analysis_result_cache.put(_analysis_cache_key(request, snapshot_refresh), payload)
     token = analysis_session_cache.put(
         AnalysisSession(
             signature=request_signature(request),
@@ -136,12 +191,23 @@ def _store_analysis_session(
     )
     payload["analysis_token"] = token
     response_payload = dict(payload)
-    population_accounts = payload.get("population_accounts")
-    if isinstance(population_accounts, list):
-        response_payload["population_accounts"] = [
-            _compact_population_account(account) for account in population_accounts
+    # The complete population remains in the server-side session for lazy
+    # analytics.  The browser only needs the compact non-zero account list;
+    # sending another 36k-account copy makes the initial response needlessly
+    # large and can prevent the page from rendering.
+    response_payload.pop("population_accounts", None)
+    accounts = payload.get("accounts")
+    if isinstance(accounts, list):
+        response_payload["accounts"] = [
+            _compact_population_account(account) for account in accounts
         ]
     return response_payload
+
+
+def _analysis_cache_key(request: AnalysisRequest, snapshot_refresh: object) -> str:
+    """Separate results by request and the exact warehouse/snapshot state."""
+    state = json.dumps(snapshot_refresh, sort_keys=True, separators=(",", ":"), default=str)
+    return f"{request_signature(request)}:{state}"
 
 
 @app.get("/api/health")
@@ -230,18 +296,14 @@ def filter_options(repository: ClickHouseRepository = Depends(get_repository)) -
         raise HTTPException(status_code=502, detail="ClickHouse filter query failed") from exc
 
 
-@app.post("/api/abook/analysis")
-def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depends(get_repository)) -> dict:
+def _analysis_uncached(request: AnalysisRequest, repository: ClickHouseRepository) -> dict:
     try:
-        snapshot_refresh = ensure_local_snapshots_for_request(request)
-        if snapshot_refresh.get("status") == "error":
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "code": "snapshot_refresh_failed",
-                    "message": str(snapshot_refresh.get("error") or "本地快照重建失败"),
-                },
-            )
+        # Snapshot rebuilds scan several large local Parquet tables.  They are
+        # deliberately kept out of the interactive analysis request: a stale
+        # snapshot should be reported in the response, not turn the dashboard
+        # into a multi-minute blocking request.  Rebuilds remain available
+        # through the explicit refresh endpoint and the CLI.
+        snapshot_refresh = snapshot_status_for_request(request)
         personal_candidates = load_personal_candidates()
         news_candidates = load_news_candidates()
         avg_profit_snapshot = build_avg_profit_filter(request)
@@ -356,6 +418,33 @@ def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depend
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="ClickHouse analysis query failed") from exc
+
+
+@app.post("/api/abook/analysis")
+def analysis(request: AnalysisRequest, repository: ClickHouseRepository = Depends(get_repository)) -> dict:
+    snapshot_refresh = snapshot_status_for_request(request)
+    cache_key = _analysis_cache_key(request, snapshot_refresh)
+    cached_payload = analysis_result_cache.get(cache_key)
+    if cached_payload is not None:
+        return _store_analysis_session(
+            request,
+            cached_payload,
+            daily_rows=None,
+            overview_daily_rows=None,
+        )
+
+    # A browser reload or a second tab must wait for the first local scan and
+    # reuse its result instead of starting another multi-gigabyte chdb query.
+    with analysis_query_lock:
+        cached_payload = analysis_result_cache.get(cache_key)
+        if cached_payload is not None:
+            return _store_analysis_session(
+                request,
+                cached_payload,
+                daily_rows=None,
+                overview_daily_rows=None,
+            )
+        return _analysis_uncached(request, repository)
 
 
 @app.get("/api/abook/accounts/{platform}/{login}")
@@ -565,6 +654,10 @@ def newcomer_account(
     repository: ClickHouseRepository = Depends(get_repository),
 ) -> dict:
     try:
+        cache_signature = request_signature(request)
+        cached_result = newcomer_account_cache.get(cache_signature)
+        if cached_result is not None:
+            return cached_result
         _, analysis_payload = _resolve_analysis_session(
             request.analysis,
             request.analysis_token,
@@ -594,7 +687,7 @@ def newcomer_account(
         min_trades_values = list(request.min_trades_values)
         if request.min_trades is not None and request.min_trades not in min_trades_values:
             min_trades_values = sorted({*min_trades_values, request.min_trades})
-        return build_newcomer_account_sensitivity(
+        result = build_newcomer_account_sensitivity(
             account,
             account_days,
             request.analysis,
@@ -602,6 +695,8 @@ def newcomer_account(
             max_active_days=request.max_active_days,
             stats_end=request.stats_end,
         )
+        newcomer_account_cache.put(cache_signature, result)
+        return result
     except HTTPException:
         raise
     except WarehouseCoverageError as exc:
@@ -643,4 +738,7 @@ if STATIC_DIR.exists():
 
     @app.get("/")
     def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+        return FileResponse(
+            STATIC_DIR / "index.html",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )

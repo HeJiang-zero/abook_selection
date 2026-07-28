@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 from uuid import uuid4
@@ -34,6 +35,7 @@ from app.warehouse import load_manifest, new_generation, publish_manifest
 DEFAULT_START = date(2025, 7, 27)
 DEFAULT_END = date(2026, 7, 27)
 ALLOWED_PLATFORMS = ("hh_mt5", "mt4", "mt5")
+MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -43,6 +45,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--recompute-from", type=datetime.fromisoformat)
     parser.add_argument("--remote-reconcile", action="store_true")
     parser.add_argument("--reconcile-start", type=datetime.fromisoformat)
+    parser.add_argument(
+        "--reconcile-month",
+        help="Replace one historical MT4 matched-trades month from remote FINAL, e.g. 2026-05",
+    )
     parser.add_argument("--platform", action="append", dest="platforms")
     parser.add_argument(
         "--warehouse-path",
@@ -68,6 +74,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             parser.error("--reconcile-start must be before the exclusive --end")
     if args.reconcile_start is not None and not args.remote_reconcile:
         parser.error("--reconcile-start requires --remote-reconcile")
+    if args.reconcile_month is not None:
+        match = MONTH_RE.fullmatch(args.reconcile_month)
+        if match is None or not 1 <= int(match.group(2)) <= 12:
+            parser.error("--reconcile-month must use YYYY-MM")
+        args.remote_reconcile = True
     args.platforms = sorted(set(args.platforms or ALLOWED_PLATFORMS))
     invalid = set(args.platforms) - set(ALLOWED_PLATFORMS)
     if invalid:
@@ -90,6 +101,24 @@ def _month_starts(start: date, end: date) -> Iterable[Tuple[datetime, datetime, 
         month_end = min(end, next_month)
         yield _as_datetime(month_start), _as_datetime(month_end), f"{current.year:04d}-{current.month:02d}"
         current = next_month
+
+
+def _month_bounds(month: str) -> Tuple[datetime, datetime]:
+    match = MONTH_RE.fullmatch(month)
+    if match is None or not 1 <= int(match.group(2)) <= 12:
+        raise ValueError("month must use YYYY-MM")
+    current = date(int(match.group(1)), int(match.group(2)), 1)
+    if current.month == 12:
+        next_month = date(current.year + 1, 1, 1)
+    else:
+        next_month = date(current.year, current.month + 1, 1)
+    return _as_datetime(current), _as_datetime(next_month)
+
+
+def _naive_datetime(value: Any) -> datetime:
+    if not isinstance(value, datetime):
+        raise ValueError(f"matched-trade timestamp is not datetime: {value!r}")
+    return value.replace(tzinfo=None)
 
 
 def _day_ranges(start: datetime, end: datetime) -> Iterable[Tuple[datetime, datetime, str]]:
@@ -340,16 +369,27 @@ def _merge_output(
 
 
 def _remote_reconcile(
-    warehouse_path: Path, client: Any, start: datetime, end: datetime
+    warehouse_path: Path,
+    client: Any,
+    start: datetime,
+    end: datetime,
+    platforms: Optional[Iterable[str]] = None,
 ) -> Tuple[int, int, str]:
-    query, params = matched_trades_query(start, end)
+    platform_list = list(platforms) if platforms is not None else None
+    target_platforms = set(platform_list or ())
+    query, params = matched_trades_query(start, end, platforms=platform_list)
     remote_rows = _query_rows(client, query, params)
+    if not target_platforms:
+        target_platforms = {str(row.get("platform", "")) for row in remote_rows}
     month = partition_month(start)
     path = warehouse_path / "dwd_matched_trades" / f"month={month}" / "part.parquet"
     existing = load_local_matched_month(path)
     keep = [
         row for row in existing
-        if (row.get("exit_time") or row.get("entry_time")).replace(tzinfo=None) < start
+        if (
+            str(row.get("platform", "")) not in target_platforms
+            or not (start <= _naive_datetime(row.get("exit_time") or row.get("entry_time")) < end)
+        )
     ]
     merged = merge_matched_rows(keep, remote_rows)
     write_matched_month(path, merged)
@@ -391,6 +431,35 @@ def run_refresh(args: argparse.Namespace, client: Any = None) -> dict[str, Any]:
     if client is None:
         client_factory = lambda: _remote_client(get_settings())
         client = client_factory()
+
+    if args.reconcile_month is not None:
+        month_start, month_end = _month_bounds(args.reconcile_month)
+        remote_rows, merged_rows, reconcile_month = _remote_reconcile(
+            args.warehouse_path,
+            client,
+            month_start,
+            month_end,
+            platforms=("mt4",),
+        )
+        manifest_path = args.warehouse_path / "manifest.json"
+        manifest = load_manifest(manifest_path)
+        updated = update_matched_manifest(
+            manifest,
+            {reconcile_month: merged_rows},
+            datetime.now().astimezone().isoformat(),
+            coverage_start=month_start.date(),
+            coverage_end=(month_end - timedelta(days=1)).date(),
+            platforms=("mt4",),
+        )
+        publish_manifest(manifest_path, updated)
+        result.update({
+            "mode": "reconcile_month",
+            "reconcile_month": reconcile_month,
+            "remote_reconcile_rows": remote_rows,
+            "merged_rows": merged_rows,
+            "affected_months": [reconcile_month],
+        })
+        return result
 
     archive_stats = _archive_inputs(args, client, client_factory=client_factory)
     if client_factory is not None:

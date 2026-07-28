@@ -144,6 +144,13 @@ def test_parse_args_accepts_recompute_from_cutoff():
     assert args.recompute_from == datetime(2026, 7, 23, 23, 59, 59)
 
 
+def test_parse_args_accepts_explicit_historical_reconcile_month():
+    args = parse_args(["--reconcile-month", "2026-05"])
+
+    assert args.reconcile_month == "2026-05"
+    assert args.remote_reconcile is True
+
+
 def test_load_archived_deals_reads_local_parquet_before_remote_fallback(tmp_path):
     import pyarrow as pa
     import pyarrow.parquet as pq

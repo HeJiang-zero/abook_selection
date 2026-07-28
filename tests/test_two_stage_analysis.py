@@ -3,7 +3,7 @@ from decimal import Decimal
 import json
 import math
 
-from app.service import _account_period_metrics, _long_trades_ratio_pass, build_selection_funnel, build_two_stage_payload
+from app.service import _account_period_metrics, _book_performance, _long_trades_ratio_pass, build_selection_funnel, build_two_stage_payload
 
 
 def row(login, month, *, group="real\\FPlive", trades=0, wins=0, losses=0,
@@ -900,6 +900,22 @@ def test_two_stage_analysis_exposes_book_performance_and_finite_payload():
     assert result["book_performance"]["selection"]["abook"]["theoretical_increment"] == 200.0
     assert result["book_performance"]["selection"]["bbook"]["theoretical_increment"] == -200.0
     json.dumps(result, allow_nan=False)
+
+
+def test_book_performance_keeps_monthly_loss_when_account_phase_is_net_positive():
+    account = {
+        "selection": {"client_net_pnl": 50, "gross_wins": 100, "gross_losses": -50, "trade_count": 2},
+        "monthly": [
+            {"phase": "selection", "client_net_pnl": -100},
+            {"phase": "selection", "client_net_pnl": 150},
+        ],
+    }
+
+    result = _book_performance([account], "selection", "abook")
+
+    assert result["net_pnl"] == 50.0
+    assert result["positive_pnl"] == 150.0
+    assert result["negative_pnl"] == -100.0
 
 
 def test_personal_candidate_list_forces_union_without_duplicate_account_impact():

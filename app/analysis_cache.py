@@ -95,5 +95,8 @@ def request_signature(request: Any) -> str:
 
 
 analysis_session_cache = AnalysisSessionCache()
+analysis_result_cache = ResultCache(max_entries=4, ttl_seconds=900.0)
+analysis_query_lock = RLock()
 direction_analytics_cache = ResultCache()
 newcomer_analytics_cache = ResultCache()
+newcomer_account_cache = ResultCache(max_entries=32, ttl_seconds=600.0)

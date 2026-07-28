@@ -112,8 +112,18 @@ def open_entries_query(cutoff: datetime) -> Tuple[str, dict[str, Any]]:
 
 
 def matched_trades_query(
-    start: datetime, end: datetime
+    start: datetime,
+    end: datetime,
+    platforms: Optional[Iterable[str]] = None,
 ) -> Tuple[str, dict[str, Any]]:
+    platform_filter = ""
+    params: dict[str, Any] = {
+        "start": _format_datetime(start),
+        "end": _format_datetime(end),
+    }
+    if platforms is not None:
+        platform_filter = "AND platform IN {platforms:Array(String)}"
+        params["platforms"] = list(platforms)
     query = """
     SELECT
         toUInt64(login) AS login,
@@ -133,10 +143,12 @@ def matched_trades_query(
     FROM risk.dwd_matched_trades FINAL
     WHERE exit_time >= {start:DateTime}
       AND exit_time < {end:DateTime}
+      {platform_filter}
     ORDER BY exit_time, platform, login, symbol, entry_deal_id, exit_deal_id
     """
+    query = query.replace("{platform_filter}", platform_filter)
     _assert_read_only(query)
-    return query, {"start": _format_datetime(start), "end": _format_datetime(end)}
+    return query, params
 
 
 def write_query_stream(client: Any, query: str, params: dict[str, Any], target: Path) -> int:

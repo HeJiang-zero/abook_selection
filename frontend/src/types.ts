@@ -69,19 +69,112 @@ export interface DirectionAnalyticsPayload {
   rules?: Record<string, any>
 }
 
+export interface NewcomerSelectionMetrics {
+  trade_count: number
+  active_trade_days: number
+  winning_trades: number
+  losing_trades: number
+  long_trades: number
+  short_trades: number
+  long_trades_ratio: number
+  win_rate: number
+  profit_factor: number | null
+  payoff_ratio: number
+  client_net_pnl: number
+  top_positive_day_concentration: number
+  gross_wins: number
+  gross_losses: number
+}
+
+export type NewcomerPool = 'admitted' | 'observe' | 'rejected' | 'left_track' | 'blocked' | 'inactive'
+
+export interface NewcomerAccount {
+  platform: string
+  login: number
+  account_group: string
+  martingale_hard_block: boolean
+  martingale_risk_level?: string | null
+  pool: NewcomerPool
+  admitted: boolean
+  admitted_on: string | null
+  as_of: string | null
+  active_trade_days: number
+  window_trade_count: number
+  selection: NewcomerSelectionMetrics
+  selection_flags: string[]
+  post_asof_pnl: number
+  validation_period_pnl: number
+  stats_end: string
+  min_trades_used: number
+  trades_to_mature: number
+  days_to_cap: number
+}
+
+export interface NewcomerCounts {
+  observe: number
+  admitted: number
+  rejected: number
+  left_track: number
+  martingale_blocked: number
+  skipped_abook: number
+  skipped_inactive: number
+  active_candidates: number
+  unqualified_total: number
+}
+
+export interface NewcomerTruncation {
+  observe_cap: number
+  observe_truncated: boolean
+  rejected_cap: number
+  rejected_truncated: boolean
+}
+
+export interface NewcomerKpi {
+  admitted_accounts: number
+  post_asof_net_pnl: number
+  admitted_positive: number
+  admitted_negative: number
+  observe_accounts: number
+  skipped_inactive: number
+  average_post_asof_pnl: number
+  median_post_asof_pnl: number
+}
+
+export interface NewcomerTopRow {
+  platform: string
+  login: number
+  account_group: string
+  as_of: string | null
+  active_trade_days: number
+  trade_count: number
+  pnl: number
+}
+
+export interface NewcomerTopAccounts {
+  winners: NewcomerTopRow[]
+  losers: NewcomerTopRow[]
+}
+
+export interface NewcomerAsOfBucket {
+  date: string
+  accounts: number
+}
+
 export interface NewcomerAnalyticsPayload {
   pnl_basis?: string
   selection?: { start: string; end: string }
   validation?: { start: string; end: string }
-  counts?: Record<string, number>
-  kpi?: Record<string, number>
+  counts?: Partial<NewcomerCounts>
+  truncation?: NewcomerTruncation
+  kpi?: Partial<NewcomerKpi>
   summary?: Record<string, any>
   pnl_distribution?: Record<string, Array<Record<string, any>>>
   cumulative_pnl?: Record<string, Array<Record<string, any>>>
-  top_accounts?: Record<string, { winners?: Array<Record<string, any>>; losers?: Array<Record<string, any>> }>
-  admitted?: Array<Record<string, any>>
-  observe?: Array<Record<string, any>>
-  rejected?: Array<Record<string, any>>
+  as_of_distribution?: NewcomerAsOfBucket[]
+  top_accounts?: Record<string, Partial<NewcomerTopAccounts>>
+  admitted?: NewcomerAccount[]
+  observe?: NewcomerAccount[]
+  rejected?: NewcomerAccount[]
   rules?: Record<string, any>
 }
 
@@ -89,7 +182,7 @@ export interface NewcomerAccountSensitivity {
   platform?: string
   login?: number
   stats_end?: string
-  points: Array<Record<string, any>>
+  points: NewcomerAccount[]
 }
 
 export interface WarehouseStatus {

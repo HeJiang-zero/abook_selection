@@ -15,8 +15,8 @@ def test_vite_project_and_build_output_are_present():
     assert '"build": "vite build --outDir ../static"' in package
     assert '"vue"' in package
     assert '"echarts"' in package
-    assert 'src="/assets/app.js"' in index
-    assert 'href="/assets/styles.css"' in index
+    assert 'src="/assets/app.js?v=' in index
+    assert 'href="/assets/styles.css?v=' in index
     assert (ROOT / "static" / "app.js").exists()
     assert (ROOT / "static" / "styles.css").exists()
 
@@ -55,7 +55,8 @@ def test_frontend_contains_filter_controls_and_all_phase_six_tabs():
     assert "min_avg_daily_profit" not in sidebar
     assert "max_daily_profit_month_contribution" not in sidebar
     assert "min_avg_profit" not in sidebar
-    assert "7月新用户" in (FRONTEND / "src/components/AccountsTable.vue").read_text()
+    assert "7月新用户" not in (FRONTEND / "src/components/AccountsTable.vue").read_text()
+    assert "窗口新用户" in (FRONTEND / "src/components/AccountsTable.vue").read_text()
     assert "confirmed_users" in sidebar
     assert "confirmed_level_counts" in sidebar
     assert "勾选 = 阻断该等级" in sidebar
@@ -100,6 +101,35 @@ def test_frontend_reuses_analysis_token_for_book_analytics():
     assert "analysis_token" in types
     assert "analysis_token: analysisToken" in api
     assert "data.value.analysis_token" in app
+
+
+def test_frontend_refreshes_active_lazy_panel_after_main_analysis():
+    app = _source("App.vue")
+
+    assert "let analysisVersion = 0" in app
+    assert "let bookLoadVersion = 0" in app
+    assert "await refreshActiveAnalytics(currentAnalysisVersion)" in app
+    assert "async function refreshActiveAnalytics(expectedVersion: number)" in app
+    assert "requestVersion === analysisVersion && loadVersion === bookLoadVersion" in app
+    assert "requestVersion === analysisVersion && loadVersion === directionLoadVersion" in app
+    assert "requestVersion === analysisVersion && loadVersion === newcomerLoadVersion" in app
+
+
+def test_frontend_invalidates_every_panel_when_main_parameters_are_applied():
+    app = _source("App.vue")
+
+    assert "function syncDependentRequests()" in app
+    assert "directionRequest.value = cloneRequest(request.value)" in app
+    assert "newcomerRequest.value = cloneRequest(request.value)" in app
+    assert "syncDependentRequests()" in app.split("async function loadAnalysis", 1)[1].split("async function refreshLocalSnapshots", 1)[0]
+    assert "bookRequestKey.value = ''" in app
+    assert "directionRequestKey.value = ''" in app
+    assert "newcomerRequestKey.value = ''" in app
+    assert "bookRequestKey.value === currentRequestKey" in app
+    assert "directionRequestKey.value === currentRequestKey" in app
+    assert "newcomerRequestKey.value === currentRequestKey" in app
+    assert "else if (tab === 'direction') loadDirection()" in app
+    assert "else if (tab === 'newcomer') loadNewcomer()" in app
 
 
 def test_frontend_reports_empty_or_malformed_json_responses_with_endpoint_context():
@@ -166,8 +196,10 @@ def test_chart_tabs_render_cached_analytics_when_their_components_mount_again():
     books = _source("components/BookPerformance.vue")
     direction = _source("components/DirectionPanel.vue")
 
-    assert "watch(() => [props.analytics, props.activeTab], renderChart, { deep: true, immediate: true })" in books
-    assert "}), { deep: true, immediate: true })" in direction
+    assert "watch(() => [props.analytics, props.activeTab], renderChart, { immediate: true })" in books
+    assert "watch(() => props.analytics" in direction
+    assert "useChartList" in books
+    assert "useChartList" in direction
 
 
 def test_frontend_has_martingale_drawer_and_responsive_sidebar_contract():
@@ -250,9 +282,10 @@ def test_frontend_exposes_pnl_audit_and_funnel_criteria_contract():
     assert "direction_balance_passed" in funnel
     assert "long_trades_ratio" in funnel
     assert "selection_client_net_pnl" in analysis
-    assert "june_client_net_pnl" in analysis
-    assert "5月 P&amp;L" in analysis and "6月 P&amp;L" in analysis and "7月 P&amp;L" in analysis
-    assert "may_client_net_pnl" in analysis
+    assert "june_client_net_pnl" in analysis or "monthly_pnls" in analysis
+    assert "monthLabel" in analysis
+    assert "availableMonths" in analysis
+    assert "may_client_net_pnl" in analysis or "monthly_pnls" in analysis
     assert "Bbook 公司影响" not in analysis
     assert "profit_overview?.pnl_basis" in analysis
 
@@ -304,10 +337,10 @@ def test_frontend_exposes_newcomer_rolling_screen_tab():
     assert "跳过无成交" in panel
     assert "trades" in panel
     assert "单用户敏感性" in panel
-    assert "emit('run')" in panel
+    assert "emit('run'" in panel
     assert "cumulativeChart" in panel
     assert "distributionChart" in panel
-    assert "入选后 Top" in panel
+    assert "Top 盈利" in panel
 
 
 def test_direction_panel_requires_explicit_run_button_dynamic_phase_table_and_sorting():
@@ -315,13 +348,13 @@ def test_direction_panel_requires_explicit_run_button_dynamic_phase_table_and_so
     panel = (FRONTEND / "src/components/DirectionPanel.vue").read_text()
 
     assert "运行分向筛选" in panel
-    assert "emit('run')" in panel
+    assert "emit('run'" in panel
     assert "分向筛选参数" in panel
     assert "不会自动查询" in panel
     assert "directionRequest" in app
     assert "@run=\"runDirection\"" in app
-    assert "directionRequest.value.rules = { ...defaultRules }" in app
-    assert "long_trades_ratio: '多空比例未达标'" in panel
+    assert "directionRequest.value = JSON.parse(JSON.stringify(request.value))" in app
+    assert "long_trades_ratio: '多单比例未达标'" in panel
     assert "sortBy" in panel
     assert "sortDirection" in panel
     assert "toggleSort" in panel
@@ -340,7 +373,8 @@ def test_direction_panel_splits_book_side_phase_and_keeps_only_material_pnl_acco
     assert "side_pnl" in panel
     assert "Math.abs(number(longMetric.side_pnl)) > 10 || Math.abs(number(shortMetric.side_pnl)) > 10" in panel
     assert "cumulativeChart" in panel
-    assert "echarts" in panel
+    assert "useChartList" in panel
+    assert "composables/useChart" in panel
     for removed in ["style_breakdown", "holding_duration_bins", "trade_volume_bins"]:
         assert removed not in panel
     for metric in ["平均 P&amp;L", "中位数 P&amp;L", "最差单日", "Top 5 P&amp;L 集中度"]:
@@ -353,12 +387,12 @@ def test_direction_panel_uses_two_pnl_bars_eight_row_pagination_and_search_actio
     assert "pnlDistributionCharts" in panel
     assert "Long" in panel and "Short" in panel
     assert "type: 'bar'" in panel
-    assert "pageSize = 8" in panel
+    assert "pageSize = ref(8)" in panel
     assert "pagedRows" in panel
     assert "pageCount" in panel
     assert "上一页" in panel and "下一页" in panel
     assert "重新运行分向筛选" in panel
-    assert "emit('run')" in panel
+    assert "emit('run'" in panel
     assert "showSymbol: false" in panel
     assert "smooth: true" in panel
     assert "cumulative_pnl?.full" in panel
@@ -435,11 +469,11 @@ def test_direction_panel_removes_symbol_heatmap_and_all_profit_counts_show_preci
 
     assert "symbolHeatmapChart" not in direction
     assert "品种热力" not in direction
-    assert "precision(" in direction
-    assert "precision(" in books
-    assert "precision {{" in direction
-    assert "precision {{" in books
-    assert "<th>precision</th>" in books
+    assert "profitableRate(" in direction
+    assert "profitableRate(" in books
+    assert "盈利占比 {{" in direction
+    assert "盈利占比 {{" in books
+    assert "<th>盈利占比</th>" in books
 
 
 def test_direction_account_table_labels_all_three_direction_metrics():
