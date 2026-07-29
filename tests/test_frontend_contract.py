@@ -128,6 +128,11 @@ def test_frontend_invalidates_every_panel_when_main_parameters_are_applied():
     assert "bookRequestKey.value === currentRequestKey" in app
     assert "directionRequestKey.value === currentRequestKey" in app
     assert "newcomerRequestKey.value === currentRequestKey" in app
+    assert "function analysisRequestKey(source: RequestModel)" in app
+    assert "data.value.analysis_token || 'no-analysis-session'" in app
+    assert "const currentRequestKey = analysisRequestKey(request.value)" in app
+    assert "const currentRequestKey = analysisRequestKey(directionRequest.value)" in app
+    assert "<BookPerformance :key=\"`${activeTab}:${data.analysis_token || 'no-analysis-session'}`\"" in app
     assert "else if (tab === 'direction') loadDirection()" in app
     assert "else if (tab === 'newcomer') loadNewcomer()" in app
 

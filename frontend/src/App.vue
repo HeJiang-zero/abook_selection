@@ -64,6 +64,13 @@ function requestKey(source: RequestModel): string {
   return JSON.stringify(source)
 }
 
+function analysisRequestKey(source: RequestModel): string {
+  // A rule set can be applied more than once while the warehouse or its local
+  // snapshots change underneath it.  The token identifies the exact overview
+  // session, so it must be part of every lazy panel's cache identity.
+  return `${requestKey(source)}:${data.value.analysis_token || 'no-analysis-session'}`
+}
+
 function syncDependentRequests() {
   // The sidebar is the single source of truth for the main analysis. A new
   // apply must invalidate the independently editable direction/newcomer
@@ -138,7 +145,7 @@ function closeAccount() {
 }
 async function loadBook() {
   const includeSymbols = activeTab.value === 'users'
-  const currentRequestKey = requestKey(request.value)
+  const currentRequestKey = analysisRequestKey(request.value)
   const bookMatchesRequest = bookData.value && bookRequestKey.value === currentRequestKey
   if ((bookMatchesRequest && (!includeSymbols || bookSymbolsLoaded.value)) || bookLoading.value || activeTab.value === 'overview') return
   const requestVersion = analysisVersion
@@ -160,7 +167,7 @@ async function loadBook() {
   } catch (err) { if (requestVersion === analysisVersion && loadVersion === bookLoadVersion) error.value = err instanceof Error ? err.message : String(err) } finally { if (loadVersion === bookLoadVersion) bookLoading.value = false }
 }
 async function loadDirection() {
-  const currentRequestKey = requestKey(directionRequest.value)
+  const currentRequestKey = analysisRequestKey(directionRequest.value)
   if ((directionData.value && directionRequestKey.value === currentRequestKey) || directionLoading.value || activeTab.value !== 'direction') return
   const requestVersion = analysisVersion
   const loadVersion = ++directionLoadVersion
@@ -181,7 +188,7 @@ async function runDirection(payload?: RequestModel) {
   await loadDirection()
 }
 async function loadNewcomer() {
-  const currentRequestKey = `${requestKey(newcomerRequest.value)}:${newcomerMaxActiveDays.value}`
+  const currentRequestKey = `${analysisRequestKey(newcomerRequest.value)}:${newcomerMaxActiveDays.value}`
   if ((newcomerData.value && newcomerRequestKey.value === currentRequestKey) || newcomerLoading.value || activeTab.value !== 'newcomer') return
   if (!data.value.analysis_token) {
     error.value = '请先在总览点击「应用筛选与验证」，再运行新人筛选'
@@ -312,7 +319,7 @@ const tabs: Array<{ id: Tab; label: string }> = [
         <template v-else-if="activeTab === 'overview'"><AbookAnalysis :data="data" @open="openAccount" /><KpiCards :data="data" /><SelectionFunnel :data="data" :rules-dirty="rulesDirty" /><AccountsTable :accounts="data.accounts || []" @open="openAccount" /></template>
         <template v-else-if="activeTab === 'direction'"><DirectionPanel :analytics="directionData" :loading="directionLoading" :request="directionRequest" @open="openDirectionAccount" @export="downloadDirectionExport" @run="runDirection" /></template>
         <template v-else-if="activeTab === 'newcomer'"><NewcomerPanel :analytics="newcomerData" :loading="newcomerLoading" :request="newcomerRequest" :max-active-days="newcomerMaxActiveDays" :analysis-token="data.analysis_token" @update:max-active-days="newcomerMaxActiveDays = $event" @run="runNewcomer" /></template>
-        <template v-else><BookPerformance :analytics="bookData" :loading="bookLoading" :active-tab="activeTab" :request="request" :accounts="data.population_accounts || data.accounts || []" @open="openAccount" /></template>
+        <template v-else><BookPerformance :key="`${activeTab}:${data.analysis_token || 'no-analysis-session'}`" :analytics="bookData" :loading="bookLoading" :active-tab="activeTab" :request="request" :accounts="data.population_accounts || data.accounts || []" @open="openAccount" /></template>
       </main>
     </div>
     <AccountDrawer :account="selectedAccount" :detail="accountDetail" :direction-account="selectedDirectionAccount" :loading="detailLoading" :error="detailError" @close="closeAccount" />
