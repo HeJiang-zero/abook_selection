@@ -25,7 +25,6 @@ PARTITIONED_TABLES = {
     "ods_mt4_daily_balance",
     "ods_mt5_daily_balance",
     "dws_account_martingale_window",
-    "dws_account_daily_window",
 }
 TABLES = (
     "ods_mt4_users",
@@ -35,7 +34,6 @@ TABLES = (
     "ods_mt4_daily_balance",
     "ods_mt5_daily_balance",
     "dws_account_martingale_window",
-    "dws_account_daily_window",
 )
 
 
@@ -155,40 +153,6 @@ def _table_query(table: str, start: date, end: date, platforms: list[str], clien
         FROM risk.dws_account_martingale_window FINAL
         WHERE platform IN {platforms:Array(String)}
           AND window_end >= {start:DateTime} AND window_end < {end_exclusive:DateTime}
-        """, params
-    if table == "dws_account_daily_window":
-        schema = client.query("DESCRIBE TABLE risk.dws_account_daily_window")
-        columns = {str(row[0]) for row in schema.result_rows}
-        def choose(candidates: tuple[str, ...], label: str) -> str:
-            for candidate in candidates:
-                if candidate in columns:
-                    return candidate
-            raise RuntimeError(f"daily window table missing {label}")
-        platform = choose(("platform", "source_platform"), "platform")
-        login = choose(("login", "account", "login_id"), "login")
-        trade_date = choose(("trade_date", "window_end", "window_start"), "trade date")
-        profit = choose(("daily_profit", "profit", "client_net_pnl", "net_profit", "pnl"), "daily profit")
-        trades = choose(("daily_trades", "trade_count", "trades"), "daily trade count")
-        window_type = "window_type" if "window_type" in columns else None
-        window_start = "window_start" if "window_start" in columns else trade_date
-        window_end = "window_end" if "window_end" in columns else trade_date
-        params["start"] = start.isoformat()
-        params["end_exclusive"] = _exclusive_end(end)
-        platform_filter = f'AND "{platform}" IN {{platforms:Array(String)}}'
-        custom_filter = f'AND "{window_type}" = \'CUSTOM\'' if window_type else ""
-        return f"""
-        SELECT "{platform}" AS platform, toUInt64("{login}") AS login,
-               {f'"{window_type}"' if window_type else "'CUSTOM'"} AS window_type,
-               toDate("{window_start}") AS window_start,
-               toDate("{window_end}") AS window_end,
-               toDate("{trade_date}") AS trade_date,
-               toFloat64("{profit}") AS daily_profit,
-               toUInt64("{trades}") AS daily_trades
-        FROM risk.dws_account_daily_window FINAL
-        WHERE toDate("{trade_date}") >= {{start:Date}}
-          AND toDate("{trade_date}") < {{end_exclusive:Date}}
-          {platform_filter}
-          {custom_filter}
         """, params
     raise ValueError(f"unsupported Warehouse table: {table}")
 

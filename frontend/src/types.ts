@@ -270,6 +270,5 @@ export interface AnalysisPayload {
   accounts?: AccountRow[]
   population_accounts?: AccountRow[]
   daily_book_series?: any[]
-  avg_profit?: Record<string, any>
   [key: string]: any
 }

@@ -7,11 +7,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
-from scripts.build_avg_profit_snapshot import build_snapshot as avg_profit_build_snapshot
 from scripts.build_martingale_snapshot import build_snapshot as martingale_build_snapshot
 from scripts.build_user_risk_snapshot import build_snapshot as risk_build_snapshot
 
-from .avg_profit import snapshot_path as avg_profit_snapshot_path
 from .analysis_cache import (
     analysis_session_cache,
     analysis_result_cache,
@@ -33,7 +31,6 @@ _REFRESH_LOCK = threading.RLock()
 def snapshot_paths() -> dict[str, Path]:
     return {
         "risk": risk_snapshot_path(),
-        "avg_profit": avg_profit_snapshot_path(),
         "martingale": martingale_snapshot_path(),
     }
 
@@ -197,7 +194,6 @@ def refresh_snapshots(
     """Build and atomically publish all local analysis snapshots."""
     builders: dict[str, Callable[[str, str, list[str]], dict[str, Any]]] = {
         "risk": risk_build_snapshot,
-        "avg_profit": avg_profit_build_snapshot,
         "martingale": martingale_build_snapshot,
     }
     validation_start = validation_start or selection_start

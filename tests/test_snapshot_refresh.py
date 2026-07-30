@@ -13,7 +13,7 @@ def _load_snapshot_refresh():
         pytest.fail(f"snapshot refresh module is not implemented: {exc}")
 
 
-def test_refresh_snapshots_builds_all_three_payloads_with_current_selection(monkeypatch, tmp_path):
+def test_refresh_snapshots_builds_all_payloads_with_current_selection(monkeypatch, tmp_path):
     snapshot_refresh = _load_snapshot_refresh()
     calls = []
     monkeypatch.setattr(
@@ -23,17 +23,11 @@ def test_refresh_snapshots_builds_all_three_payloads_with_current_selection(monk
     )
     monkeypatch.setattr(
         snapshot_refresh,
-        "avg_profit_build_snapshot",
-        lambda start, end, platforms: calls.append(("avg_profit", start, end, platforms)) or {"records": [{"login": 1}]},
-    )
-    monkeypatch.setattr(
-        snapshot_refresh,
         "martingale_build_snapshot",
         lambda start, end, platforms: calls.append(("martingale", start, end, platforms)) or {"records": [{"login": 1}]},
     )
     paths = {
         "risk": tmp_path / "risk.json",
-        "avg_profit": tmp_path / "avg_profit.json",
         "martingale": tmp_path / "martingale.json",
     }
     monkeypatch.setattr(snapshot_refresh, "snapshot_paths", lambda: paths)
@@ -43,7 +37,6 @@ def test_refresh_snapshots_builds_all_three_payloads_with_current_selection(monk
     assert result["status"] == "ready"
     assert {(name, start, end) for name, start, end, _ in calls} == {
         ("risk", "2026-05-01", "2026-06-30"),
-        ("avg_profit", "2026-05-01", "2026-06-30"),
         ("martingale", "2026-05-01", "2026-06-30"),
     }
     assert all(path.exists() for path in paths.values())
@@ -54,7 +47,6 @@ def test_refresh_snapshots_keeps_existing_files_when_a_builder_fails(monkeypatch
     snapshot_refresh = _load_snapshot_refresh()
     paths = {
         "risk": tmp_path / "risk.json",
-        "avg_profit": tmp_path / "avg_profit.json",
         "martingale": tmp_path / "martingale.json",
     }
     for path in paths.values():
@@ -63,10 +55,9 @@ def test_refresh_snapshots_keeps_existing_files_when_a_builder_fails(monkeypatch
     monkeypatch.setattr(snapshot_refresh, "risk_build_snapshot", lambda *args: {"records": []})
     monkeypatch.setattr(
         snapshot_refresh,
-        "avg_profit_build_snapshot",
+        "martingale_build_snapshot",
         lambda *args: (_ for _ in ()).throw(RuntimeError("source unavailable")),
     )
-    monkeypatch.setattr(snapshot_refresh, "martingale_build_snapshot", lambda *args: {"records": []})
 
     result = snapshot_refresh.refresh_snapshots("2026-05-01", "2026-06-30", ["mt5"])
 
@@ -79,11 +70,10 @@ def test_refresh_snapshots_stamps_validation_and_warehouse_generation(monkeypatc
     snapshot_refresh = _load_snapshot_refresh()
     paths = {
         "risk": tmp_path / "risk.json",
-        "avg_profit": tmp_path / "avg_profit.json",
         "martingale": tmp_path / "martingale.json",
     }
     monkeypatch.setattr(snapshot_refresh, "snapshot_paths", lambda: paths)
-    for name in ("risk_build_snapshot", "avg_profit_build_snapshot", "martingale_build_snapshot"):
+    for name in ("risk_build_snapshot", "martingale_build_snapshot"):
         monkeypatch.setattr(snapshot_refresh, name, lambda *args: {"records": []})
 
     result = snapshot_refresh.refresh_snapshots(
@@ -131,7 +121,6 @@ def test_snapshot_status_marks_selection_window_stale_but_validation_change_read
     snapshot_refresh = _load_snapshot_refresh()
     paths = {
         "risk": tmp_path / "risk.json",
-        "avg_profit": tmp_path / "avg_profit.json",
         "martingale": tmp_path / "martingale.json",
     }
     monkeypatch.setattr(snapshot_refresh, "snapshot_paths", lambda: paths)
@@ -162,7 +151,6 @@ def test_ensure_local_snapshots_rebuilds_only_when_selection_or_generation_is_st
     snapshot_refresh = _load_snapshot_refresh()
     paths = {
         "risk": tmp_path / "risk.json",
-        "avg_profit": tmp_path / "avg_profit.json",
         "martingale": tmp_path / "martingale.json",
     }
     monkeypatch.setattr(snapshot_refresh, "snapshot_paths", lambda: paths)

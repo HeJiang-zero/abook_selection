@@ -15,7 +15,6 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.avg_profit import build_avg_profit_filter
 from app.config import load_env_file
 from app.martingale import build_martingale_filter
 from app.models import AnalysisPeriod, AnalysisRequest, AnalysisRules
@@ -57,11 +56,9 @@ class Candidate:
 def _load_rows(request: AnalysisRequest) -> tuple[list[dict[str, Any]], Any]:
     risk_filter = build_local_risk_filter(request)
     martingale_snapshot = build_martingale_filter(request)
-    avg_profit_snapshot = build_avg_profit_filter(request)
     repository = ClickHouseRepository()
     overview_rows = repository.fetch_analysis(request)
     rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(overview_rows))
-    rows = avg_profit_snapshot.enrich_rows(rows)
     return rows, martingale_snapshot
 
 

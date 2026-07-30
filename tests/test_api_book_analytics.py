@@ -56,7 +56,6 @@ def test_book_analytics_reuses_overview_analysis_session(tmp_path, monkeypatch):
     for name in (
         "ABOOK_RISK_SNAPSHOT_PATH",
         "ABOOK_MARTINGALE_SNAPSHOT_PATH",
-        "ABOOK_AVG_PROFIT_SNAPSHOT_PATH",
     ):
         monkeypatch.setenv(name, str(tmp_path / f"{name}.json"))
 
@@ -97,7 +96,6 @@ def test_analysis_defers_daily_pnl_query_until_book_analytics(tmp_path, monkeypa
     for name in (
         "ABOOK_RISK_SNAPSHOT_PATH",
         "ABOOK_MARTINGALE_SNAPSHOT_PATH",
-        "ABOOK_AVG_PROFIT_SNAPSHOT_PATH",
     ):
         monkeypatch.setenv(name, str(tmp_path / f"{name}.json"))
 
@@ -128,7 +126,6 @@ def test_book_analytics_skips_symbol_queries_when_symbols_are_not_requested(tmp_
     for name in (
         "ABOOK_RISK_SNAPSHOT_PATH",
         "ABOOK_MARTINGALE_SNAPSHOT_PATH",
-        "ABOOK_AVG_PROFIT_SNAPSHOT_PATH",
     ):
         monkeypatch.setenv(name, str(tmp_path / f"{name}.json"))
 

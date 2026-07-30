@@ -495,12 +495,6 @@ def _account_period_metrics(
     if not rows:
         rows = [_empty_period_row(account, "1970-01")]
     metrics = _aggregate_account(rows)
-    avg_profit_values = [row.get("avg_profit") for row in rows if row.get("avg_profit") is not None]
-    metrics["avg_profit"] = float(avg_profit_values[0]) if avg_profit_values else None
-    metrics["avg_profit_status"] = next(
-        (str(row.get("avg_profit_status")) for row in rows if row.get("avg_profit_status")),
-        "not_loaded",
-    )
     if phase in {"selection", "validation"}:
         median_field = f"{phase}_median_holding_seconds"
         symbols_field = f"{phase}_symbols_traded"
@@ -754,7 +748,6 @@ def classify_accounts(
     rules: Any,
     personal_candidate_logins: set[int] | None = None,
     martingale_snapshot: Any | None = None,
-    avg_profit_snapshot_status: str = "not_loaded",
     news_candidate_logins: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Classify a materialized context without issuing another data query."""
@@ -787,7 +780,6 @@ def classify_accounts(
         news_candidate_logins=news_candidate_logins,
         martingale_snapshot=martingale_snapshot,
         excluded_martingale_levels=rules.excluded_martingale_levels,
-        avg_profit_snapshot_status=avg_profit_snapshot_status,
     )
     return payload["accounts"]
 
@@ -1282,7 +1274,6 @@ def build_two_stage_payload(
     news_candidate_info: dict[str, Any] | None = None,
     martingale_snapshot: Any | None = None,
     excluded_martingale_levels: Iterable[str] = ("extreme", "high", "medium", "low"),
-    avg_profit_snapshot_status: str = "not_loaded",
 ) -> dict[str, Any]:
     """Build final Abook/Bbook routing and an independent validation-period readout."""
     if max_peak_leverage_ratio is not None and max_leverage_p95_ratio == 2000.0:
@@ -1486,8 +1477,6 @@ def build_two_stage_payload(
             "selection": selection,
             "validation": validation,
             "monthly": monthly_metrics,
-            "avg_profit": selection.get("avg_profit"),
-            "avg_profit_status": selection.get("avg_profit_status", avg_profit_snapshot_status),
             "stability": {
                 "score": stability["score"],
                 "tier": stability["tier"],
@@ -1836,7 +1825,6 @@ def build_two_stage_payload(
             "min_long_trades_ratio": min_long_trades_ratio,
             "max_long_trades_ratio": max_long_trades_ratio,
             "max_top1_day_profit_contribution": max_top1_day_profit_contribution,
-            "avg_profit_snapshot_status": avg_profit_snapshot_status,
             "max_leverage_p95_ratio": max_leverage_p95_ratio,
             "max_high_leverage_holding_seconds": max_high_leverage_holding_seconds,
             "risk_snapshot_status": risk_snapshot_status,

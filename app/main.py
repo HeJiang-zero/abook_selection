@@ -21,7 +21,6 @@ from .analysis_cache import (
     request_signature,
 )
 from .martingale import build_martingale_filter, load_martingale_snapshot, snapshot_path
-from .avg_profit import build_avg_profit_filter, snapshot_path as avg_profit_snapshot_path
 from .book_analytics import build_book_analytics
 from .direction_analytics import build_direction_analytics_payload
 from .newcomer_analytics import build_newcomer_account_sensitivity, build_newcomer_analytics_payload
@@ -225,7 +224,6 @@ def warehouse_status() -> dict:
     snapshots = {}
     for name, path in {
         "risk": risk_snapshot_path(),
-        "avg_profit": avg_profit_snapshot_path(),
         "martingale": snapshot_path(),
     }.items():
         if not path.exists():
@@ -306,7 +304,6 @@ def _analysis_uncached(request: AnalysisRequest, repository: ClickHouseRepositor
         snapshot_refresh = snapshot_status_for_request(request)
         personal_candidates = load_personal_candidates()
         news_candidates = load_news_candidates()
-        avg_profit_snapshot = build_avg_profit_filter(request)
         personal_candidates_enabled = request.personal_candidate_list and personal_candidates.status == "ready"
         news_candidates_enabled = request.news_candidate_list and news_candidates.status == "ready"
         personal_candidate_logins = personal_candidates.login_ids if personal_candidates_enabled else frozenset()
@@ -331,10 +328,8 @@ def _analysis_uncached(request: AnalysisRequest, repository: ClickHouseRepositor
             excluded_logins = risk_filter.excluded_logins
             rows = repository.fetch_analysis(effective_request, excluded_logins=excluded_logins) if excluded_logins else repository.fetch_analysis(effective_request)
         rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(rows))
-        rows = avg_profit_snapshot.enrich_rows(rows)
         if overview_rows is not None:
             overview_rows = martingale_snapshot.enrich_rows(risk_filter.snapshot.enrich_rows(overview_rows))
-            overview_rows = avg_profit_snapshot.enrich_rows(overview_rows)
         # Risk SQL exclusions are an optimization for the Abook candidate query.
         # Final routing and company P&L must still classify the full population:
         # excluded high-leverage users belong in Bbook, not outside the report.
@@ -347,7 +342,6 @@ def _analysis_uncached(request: AnalysisRequest, repository: ClickHouseRepositor
             )
             payload["risk_management"] = risk_filter.summary()
             payload["martingale"] = martingale_snapshot.summary(request.rules.excluded_martingale_levels)
-            payload["avg_profit"] = avg_profit_snapshot.summary()
             payload["snapshot_refresh"] = snapshot_refresh
             return _store_analysis_session(
                 request,
@@ -396,11 +390,9 @@ def _analysis_uncached(request: AnalysisRequest, repository: ClickHouseRepositor
             ),
             martingale_snapshot=martingale_snapshot,
             excluded_martingale_levels=request.rules.excluded_martingale_levels,
-            avg_profit_snapshot_status=avg_profit_snapshot.status,
         )
         payload["risk_management"] = risk_filter.summary()
         payload["martingale"] = martingale_snapshot.summary(request.rules.excluded_martingale_levels)
-        payload["avg_profit"] = avg_profit_snapshot.summary()
         payload["snapshot_refresh"] = snapshot_refresh
         return _store_analysis_session(
             request,

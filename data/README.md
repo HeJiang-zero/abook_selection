@@ -9,9 +9,9 @@
 - 其他事实表：按 `month=YYYY-MM/part.parquet` 保存月分区。
 - `.sync.lock`：刷新 CLI 与 Dashboard 进程之间的文件锁，不是数据文件。
 
-Warehouse 文件和 Dashboard 的三个 JSON 快照默认不提交到 Git；`data/README.md` 本身会提交，作为数据恢复和维护说明。
+Warehouse 文件和 Dashboard 的 JSON 快照默认不提交到 Git；`data/README.md` 本身会提交，作为数据恢复和维护说明。
 
-每次刷新都会生成新的 `manifest.json` generation；同一个 generation 下的 Parquet 和三个 JSON 快照才属于同一数据版本。历史分析文档中的人数或 P&L 只对它记录时的数据版本负责，不能直接与后来刷新出的 Warehouse 逐项比较。
+每次刷新都会生成新的 `manifest.json` generation；同一个 generation 下的 Parquet 和 JSON 快照才属于同一数据版本。历史分析文档中的人数或 P&L 只对它记录时的数据版本负责，不能直接与后来刷新出的 Warehouse 逐项比较。
 
 ## 如何刷新
 
@@ -29,7 +29,7 @@ Warehouse 文件和 Dashboard 的三个 JSON 快照默认不提交到 Git；`dat
 
 1. 从 ClickHouse 拉取 Warehouse 数据并原子写入 Parquet。
 2. 发布新的 `manifest.json` generation。
-3. 基于本地 Warehouse 重建 risk、avg_profit、martingale 三个快照。
+3. 基于本地 Warehouse 重建 risk、martingale 两个快照。
 
 常用选项：
 

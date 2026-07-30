@@ -14,7 +14,6 @@ _TABLES = (
     "ods_mt4_daily_balance",
     "ods_mt5_daily_balance",
     "dws_account_martingale_window",
-    "dws_account_daily_window",
 )
 _PARAMETER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*):([A-Za-z0-9_]+(?:\([A-Za-z0-9_]+\))?)\}")
 

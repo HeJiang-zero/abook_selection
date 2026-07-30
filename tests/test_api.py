@@ -163,7 +163,6 @@ def test_warehouse_status_reports_snapshot_selection_window(tmp_path, monkeypatc
     }))
     snapshot_paths = {
         "ABOOK_RISK_SNAPSHOT_PATH": tmp_path / "risk.json",
-        "ABOOK_AVG_PROFIT_SNAPSHOT_PATH": tmp_path / "avg.json",
         "ABOOK_MARTINGALE_SNAPSHOT_PATH": tmp_path / "martingale.json",
     }
     for path in snapshot_paths.values():
@@ -327,7 +326,6 @@ def test_analysis_routes_population_accounts_even_when_risk_sql_excludes_some(mo
 
     monkeypatch.setattr("app.main.build_local_risk_filter", lambda request: RiskFilter())
     monkeypatch.setattr("app.main.build_martingale_filter", lambda request: SnapshotFilter())
-    monkeypatch.setattr("app.main.build_avg_profit_filter", lambda request: SnapshotFilter())
     monkeypatch.setattr("app.main.load_personal_candidates", lambda: Candidates())
 
     def fake_build(rows, **kwargs):

@@ -9,7 +9,6 @@ def test_newcomer_analytics_endpoint_reuses_analysis_session_and_caches(tmp_path
     for name in (
         "ABOOK_RISK_SNAPSHOT_PATH",
         "ABOOK_MARTINGALE_SNAPSHOT_PATH",
-        "ABOOK_AVG_PROFIT_SNAPSHOT_PATH",
     ):
         monkeypatch.setenv(name, str(tmp_path / f"{name}.json"))
 
