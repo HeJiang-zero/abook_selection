@@ -318,8 +318,12 @@ SELECT
     coalesce(m.matched_volume, 0) AS matched_volume,
     coalesce(m.market_pnl, 0) AS matched_market_pnl,
     coalesce(d.deal_market_pnl, 0) AS market_pnl,
-    coalesce(d.gross_wins, 0) AS gross_wins,
-    coalesce(d.gross_losses, 0) AS gross_losses,
+    -- Quality metrics (win rate / PF / payoff) use matched round-trip profit.
+    coalesce(m.gross_wins, 0) AS gross_wins,
+    coalesce(m.gross_losses, 0) AS gross_losses,
+    -- Deal gross kept for ledger audit; not used by Abook quality screens.
+    coalesce(d.gross_wins, 0) AS deal_gross_wins,
+    coalesce(d.gross_losses, 0) AS deal_gross_losses,
     coalesce(d.deal_market_pnl, 0) AS deal_market_pnl,
     coalesce(d.costs, 0) AS costs,
     coalesce(d.client_net_pnl, 0) AS client_net_pnl,

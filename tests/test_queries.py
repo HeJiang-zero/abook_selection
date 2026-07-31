@@ -210,6 +210,11 @@ def test_analysis_query_uses_tuple_population_and_canonical_deals_pnl():
     assert "daily_gross_losses" in query
     assert query.count("INNER JOIN users") >= 2
     assert "coalesce(d.deal_market_pnl, 0) AS market_pnl" in query
+    # Quality gross (PF / payoff) comes from matched; deal gross is audit-only.
+    assert "coalesce(m.gross_wins, 0) AS gross_wins" in query
+    assert "coalesce(m.gross_losses, 0) AS gross_losses" in query
+    assert "coalesce(d.gross_wins, 0) AS deal_gross_wins" in query
+    assert "coalesce(d.gross_losses, 0) AS deal_gross_losses" in query
     assert "positionCaseInsensitive(`group`, 'test') = 0" in query
     assert "positionCaseInsensitive(`group`, 'demo') = 0" in query
 

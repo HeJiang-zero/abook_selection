@@ -190,8 +190,11 @@ def _aggregate_account(rows: list[dict[str, Any]]) -> dict[str, Any]:
         _decimal(row.get("avg_holding_seconds")) * int(row.get("matched_trades", 0) or 0)
         for row in rows
     )
+    # Quality gross from matched.profit (PF / payoff / win-rate family).
+    # Ledger money stays on client_net_pnl / market_pnl from deals.
     gross_wins = _sum(rows, "gross_wins")
     gross_losses = _sum(rows, "gross_losses")
+    matched_market_pnl = _sum(rows, "matched_market_pnl")
     active_trade_days = sum(int(row.get("active_trade_days", 0) or 0) for row in rows)
     daily_active_days = sum(
         int(row.get("daily_active_days", row.get("active_trade_days", 0)) or 0)
@@ -257,6 +260,7 @@ def _aggregate_account(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "total_volume": _float(total_volume),
         "client_net_pnl": _float(_sum(rows, "client_net_pnl")),
         "market_pnl": _float(sum((_canonical_market_pnl(row) for row in rows), ZERO)),
+        "matched_market_pnl": _float(matched_market_pnl),
         "theoretical_mirror_pnl": _float(-sum((_canonical_market_pnl(row) for row in rows), ZERO)),
         "gross_wins": _float(gross_wins),
         "gross_losses": _float(gross_losses),
@@ -555,8 +559,13 @@ def _account_period_metrics(
     metrics["monthly_consistency_ratio"] = _monthly_consistency_ratio(
         metrics["best_month_pnl"], metrics["worst_month_pnl"]
     )
+    # Per-round expectancy uses matched profit so it stays homologous with
+    # win_rate / profit_factor / payoff_ratio (all matched round-trips).
+    matched_net = metrics.get("matched_market_pnl")
+    if matched_net is None:
+        matched_net = metrics.get("client_net_pnl")
     metrics["expectancy_per_trade"] = _safe_ratio(
-        _decimal(metrics.get("client_net_pnl")), Decimal(metrics["trade_count"])
+        _decimal(matched_net), Decimal(metrics["trade_count"])
     )
     metrics["average_win"] = _safe_ratio(
         _decimal(metrics.get("gross_wins")), Decimal(metrics["winning_trades"])
@@ -1714,11 +1723,12 @@ def build_two_stage_payload(
         },
         "company_profit_definition": "book company profit = - user net trading P&L; Abook assumed company profit = 0",
         "pnl_basis": {
-            "client_net_pnl": "UTC ods_mt5_deals: sum(profit + storage + commission + fee) where is_deleted = 0 and action IN (0, 1)",
-            "market_pnl": "UTC ods_mt5_deals: sum(profit) where is_deleted = 0 and action IN (0, 1)",
+            "client_net_pnl": "UTC ods_mt5_deals: sum(profit + storage + commission + fee) where is_deleted = 0 and action IN (0, 1); MT4 uses matched.profit",
+            "market_pnl": "UTC ods_mt5_deals: sum(profit) where is_deleted = 0 and action IN (0, 1); MT4 uses matched.profit",
             "funding_pnl": "action IN (2, 3) is kept separately and is not included in client_net_pnl",
             "company_pnl": "Bbook company P&L = - client_net_pnl; Abook company P&L is theoretical 0 without external hedge execution data",
-            "matched_trades": "dwd_matched_trades is used for matched trade counts and cross-check fields, not the canonical client_net_pnl",
+            "quality_metrics": "win_rate, profit_factor, payoff_ratio, expectancy_per_trade, gross_wins/gross_losses use dwd_matched_trades round-trips (matched.profit)",
+            "matched_trades": "dwd_matched_trades supplies trade counts, direction, holding, symbols, and quality screens; not the canonical client_net_pnl",
         },
     }
     book_performance = {

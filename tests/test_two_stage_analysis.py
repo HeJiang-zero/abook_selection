@@ -3,6 +3,8 @@ from decimal import Decimal
 import json
 import math
 
+import pytest
+
 from app.service import _account_period_metrics, _book_performance, _long_trades_ratio_pass, build_selection_funnel, build_two_stage_payload
 
 
@@ -985,3 +987,58 @@ def test_news_candidate_list_joins_existing_abook_rules_without_duplicate_accoun
     assert result["news_candidate_list"]["matched_accounts"] == 2
     assert len([account for account in result["accounts"] if account["login"] == 701]) == 1
     assert len([account for account in result["accounts"] if account["login"] == 702]) == 1
+
+
+def test_quality_screens_use_matched_gross_not_deal_ledger_amounts():
+    """PF / payoff / expectancy must stay homologous with matched win_rate.
+
+    Ledger client_net_pnl can diverge (costs / commission), but quality screens
+    must not mix deal gross dollars with matched trade counts.
+    """
+    rows = [
+        row(
+            901, "05",
+            trades=10, wins=6, losses=4,
+            # matched round-trip profit (also exposed as gross_* after query change)
+            market=40, gross_wins=100, gross_losses=-60,
+            # deal ledger net includes costs; would imply different PF if used
+            net=10, costs=-30,
+            active_days=5, daily_sum=10, volume=10,
+            daily_positive_sum=10, max_positive_day=3,
+        ),
+        row(
+            901, "06",
+            trades=10, wins=6, losses=4,
+            market=40, gross_wins=100, gross_losses=-60,
+            net=10, costs=-30,
+            active_days=5, daily_sum=10, volume=10,
+            daily_positive_sum=10, max_positive_day=3,
+        ),
+    ]
+    # Deal-style gross that would fail PF>1.5 if mistakenly used for screening.
+    for item in rows:
+        item["market_pnl"] = Decimal("20")
+        item["deal_gross_wins"] = Decimal("50")
+        item["deal_gross_losses"] = Decimal("-80")
+
+    result = build_two_stage_payload(
+        rows,
+        selection_start="2026-05-01", selection_end="2026-06-30",
+        validation_start="2026-07-01", validation_end="2026-07-13",
+        min_trades=10, min_win_rate=0.5, min_profit_factor=1.5, min_payoff_ratio=1.0,
+        max_top1_day_profit_contribution=1.0, min_direction_day_rate_lower_bound=0,
+        min_stability_score=0, min_positive_month_rate=0,
+        min_selection_monthly_consistency=0,
+    )
+    account = next(item for item in result["accounts"] if item["login"] == 901)
+    selection = account["selection"]
+
+    assert selection["win_rate"] == 0.6
+    assert selection["profit_factor"] == pytest.approx(100 / 60, abs=1e-6)  # matched 200/120
+    assert selection["average_win"] == pytest.approx(200 / 12, abs=1e-6)
+    assert selection["average_loss"] == pytest.approx(120 / 8, abs=1e-6)
+    assert selection["payoff_ratio"] == pytest.approx((200 / 12) / (120 / 8), abs=1e-6)
+    assert selection["expectancy_per_trade"] == pytest.approx(80 / 20, abs=1e-6)  # matched_market
+    assert selection["client_net_pnl"] == 20.0  # deals ledger still used for money
+    assert account["book"] == "abook"
+    assert "quality_metrics" in result["profit_overview"]["pnl_basis"]
